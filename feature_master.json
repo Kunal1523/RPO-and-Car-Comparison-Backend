@@ -1,0 +1,837 @@
+{
+  "Audio and Entertainment": [
+    {
+      "name": "SmartPlay Pro"
+    },
+    {
+      "name": "Surround Sense Powered by ARKAMYS"
+    },
+    {
+      "name": "Tweeters"
+    },
+    {
+      "name": "USB Connectivity/AUX"
+    },
+    {
+      "name": "Wireless Android Auto & Apple CarPlay"
+    }
+  ],
+  "Brake": [
+    {
+      "name": "Front"
+    },
+    {
+      "name": "Rear"
+    }
+  ],
+  "Comfort and Convenience": [
+    {
+      "name": "8-Way Power Adjustable Driver Seat With Memory  Function"
+    },
+    {
+      "name": "Accessory socket"
+    },
+    {
+      "name": "Air Conditioner"
+    },
+    {
+      "name": "Auto Up/Down Power Window"
+    },
+    {
+      "name": "Automatic Climate Control"
+    },
+    {
+      "name": "Cruise Control"
+    },
+    {
+      "name": "Drive mode select (Eco, Normal, Sport)"
+    },
+    {
+      "name": "Electric parking brake with auto hold"
+    },
+    {
+      "name": "Electric tailgate release"
+    },
+    {
+      "name": "Electrically-Foldable ORVM"
+    },
+    {
+      "name": "Engine Push Start/Stop with Smart Key"
+    },
+    {
+      "name": "Front console armrest with storage"
+    },
+    {
+      "name": "Front Ventilated Seats (Driver & Co-driver)"
+    },
+    {
+      "name": "Gear Shift Indicator"
+    },
+    {
+      "name": "Glove box cooling"
+    },
+    {
+      "name": "Idle stop & go (ISG)"
+    },
+    {
+      "name": "LED reading lamps (Rear)"
+    },
+    {
+      "name": "Luggage Lamp"
+    },
+    {
+      "name": "Manual Day/Night IRVM"
+    },
+    {
+      "name": "Map lamps"
+    },
+    {
+      "name": "Motor driven power steering Telescopic function"
+    },
+    {
+      "name": "Motor driven power steering Tilt Function"
+    },
+    {
+      "name": "Outside mirror Electrically adjustable"
+    },
+    {
+      "name": "Paddle shifters"
+    },
+    {
+      "name": "Passenger vanity mirror"
+    },
+    {
+      "name": "Power Windows (Fr/Rr)"
+    },
+    {
+      "name": "Rain sensing wiper"
+    },
+    {
+      "name": "Rear AC Vents"
+    },
+    {
+      "name": "Rear Centre Armrest (With Cup Holder)"
+    },
+    {
+      "name": "Rear wiper and washer"
+    },
+    {
+      "name": "Remote Keyless Entry"
+    },
+    {
+      "name": "Room lamp"
+    },
+    {
+      "name": "Steering-Mounted Audio Controls"
+    },
+    {
+      "name": "Sunglass holder"
+    },
+    {
+      "name": "Sunroof Smart panoramic"
+    },
+    {
+      "name": "Sunroof Voice enabled smart panoramic"
+    },
+    {
+      "name": "Traction control modes (Snow, Mud, Sand)"
+    },
+    {
+      "name": "USB Charger Front"
+    },
+    {
+      "name": "USB Charger Rear(x1)"
+    },
+    {
+      "name": "USB Charger Rear(x2)"
+    },
+    {
+      "name": "Wireless Charger"
+    }
+  ],
+  "Connected Car Technology": [
+    {
+      "name": "AC Idling"
+    },
+    {
+      "name": "AC On/Off"
+    },
+    {
+      "name": "Alarm"
+    },
+    {
+      "name": "Alarm On/Off"
+    },
+    {
+      "name": "Alexa Skill Connectivity4"
+    },
+    {
+      "name": "Area Guidance"
+    },
+    {
+      "name": "Battery Status"
+    },
+    {
+      "name": "Breakdown Notification"
+    },
+    {
+      "name": "Dashboard View"
+    },
+    {
+      "name": "Driving Score & Behaviour"
+    },
+    {
+      "name": "Emergency Alerts"
+    },
+    {
+      "name": "Geofence"
+    },
+    {
+      "name": "Guidance Around Destination"
+    },
+    {
+      "name": "Hazard Lights On/Off"
+    },
+    {
+      "name": "Head lamp And Hazard Lights"
+    },
+    {
+      "name": "Headlight Off"
+    },
+    {
+      "name": "Immobilizer Request"
+    },
+    {
+      "name": "Live Vehicle Tracking & Location Sharing"
+    },
+    {
+      "name": "Low Fuel & Low Range Alert"
+    },
+    {
+      "name": "Low Range"
+    },
+    {
+      "name": "Over Speed Alert"
+    },
+    {
+      "name": "Overspeeding"
+    },
+    {
+      "name": "Remote AC Control"
+    },
+    {
+      "name": "Seat Belt Alert"
+    },
+    {
+      "name": "Seatbelt"
+    },
+    {
+      "name": "Share Trip History"
+    },
+    {
+      "name": "Smartwatch Connectivity"
+    },
+    {
+      "name": "Stolen Vehicle Notification and Tracking"
+    },
+    {
+      "name": "Suzuki Connect Skills for Amazon Alexa"
+    },
+    {
+      "name": "Tow Away Alert and Tracking"
+    },
+    {
+      "name": "Tow Away and Tracking"
+    },
+    {
+      "name": "Trip (Start & End)"
+    },
+    {
+      "name": "Trip Summary"
+    },
+    {
+      "name": "Valet Alert"
+    },
+    {
+      "name": "Vehicle Location Sharing"
+    },
+    {
+      "name": "View & Share Trip History"
+    }
+  ],
+  "Dimensions": [
+    {
+      "name": "Gross Vehicle Weight (Kg)"
+    },
+    {
+      "name": "Height (mm)"
+    },
+    {
+      "name": "Kerb Weight (Kg)"
+    },
+    {
+      "name": "Length (mm)"
+    },
+    {
+      "name": "Seating Capacity (nos.)"
+    },
+    {
+      "name": "Turning Radius (m)"
+    },
+    {
+      "name": "Wheelbase (mm)"
+    },
+    {
+      "name": "Width (mm)"
+    }
+  ],
+  "Engine": [
+    {
+      "name": "Configuration"
+    },
+    {
+      "name": "Displacement (cc)"
+    },
+    {
+      "name": "Engine Type"
+    },
+    {
+      "name": "Max Power (KW)"
+    },
+    {
+      "name": "Max Torque (Nm @ rpm)"
+    },
+    {
+      "name": "Valvetrain Type"
+    }
+  ],
+  "Exterior": [
+    {
+      "name": "Antenna"
+    },
+    {
+      "name": "Auto Headlamps"
+    },
+    {
+      "name": "Chrome Belt Line Garnish"
+    },
+    {
+      "name": "Dual tone pack (Black painted) Lightening arch C pillar"
+    },
+    {
+      "name": "Dual tone pack (Black painted) Oustide door mirrors"
+    },
+    {
+      "name": "Follow-Me Home Headlamp"
+    },
+    {
+      "name": "Headlamps"
+    },
+    {
+      "name": "LED Daytime Running Lamps (DRL)"
+    },
+    {
+      "name": "LED Projector Headlamps"
+    },
+    {
+      "name": "LED Tail Lamp"
+    },
+    {
+      "name": "Lighting LED High mounted stop lamp (HMSL)"
+    },
+    {
+      "name": "Lighting LED Positioning lamp"
+    },
+    {
+      "name": "Lighting LED turn signal with Sequential Function"
+    },
+    {
+      "name": "ORVM with Turn Indicator"
+    },
+    {
+      "name": "Outside door handles Chrome"
+    },
+    {
+      "name": "Outside door mirrors(ORVM) Black Painted"
+    },
+    {
+      "name": "Outside door mirrors(ORVM) Body colour"
+    },
+    {
+      "name": "Panoramic Sunroof"
+    },
+    {
+      "name": "parametric radiator grille Dark Chrome"
+    },
+    {
+      "name": "Rear Window Wiper & Washer"
+    },
+    {
+      "name": "Red brake calipers Front"
+    },
+    {
+      "name": "Red brake calipers Rear"
+    },
+    {
+      "name": "Roof Rail"
+    },
+    {
+      "name": "Roof Spoiler"
+    },
+    {
+      "name": "Side sill garnish Black Painted"
+    },
+    {
+      "name": "Side sill garnish Silver"
+    },
+    {
+      "name": "Skid Plate (Front & Rear)"
+    },
+    {
+      "name": "Wheels Type"
+    }
+  ],
+  "Fuel": [
+    {
+      "name": "Fuel Tank Capacity (L)"
+    },
+    {
+      "name": "Fuel Type"
+    },
+    {
+      "name": "Fuel-Efficiency (km/l)"
+    }
+  ],
+  "Infotainment": [
+    {
+      "name": "Bluetooth connectivity"
+    },
+    {
+      "name": "Bose premium sound 8 speaker system with front central speaker & sub-woofer"
+    },
+    {
+      "name": "Digital Cluster 26.03 cm (10.25\") Multi display digital cluster"
+    },
+    {
+      "name": "Digital Cluster Digital cluster with color TFT MID"
+    },
+    {
+      "name": "Door Ajar Warning Lamp"
+    },
+    {
+      "name": "Front & rear speakers"
+    },
+    {
+      "name": "Front tweeters"
+    },
+    {
+      "name": "Fuel Consumption (Instantaneous and Average)"
+    },
+    {
+      "name": "Gear Shift Indicator"
+    },
+    {
+      "name": "Headlamp on Warning"
+    },
+    {
+      "name": "Home to car (H2C) with Alexa#"
+    },
+    {
+      "name": "Hyundai Bluelink (connected car technology)"
+    },
+    {
+      "name": "Infotainment system 20.32 cm (8.0\") touchscreen infotainment system"
+    },
+    {
+      "name": "Infotainment system 26.03 cm (10.25\") HD audio video navigation system"
+    },
+    {
+      "name": "JioSaavn music streaming"
+    },
+    {
+      "name": "Low Fuel Warning Light"
+    },
+    {
+      "name": "Over-the-air (OTA) updates for map and infotainment"
+    },
+    {
+      "name": "Rear Seatbelt Reminder Warning Indicator"
+    },
+    {
+      "name": "Smartphone connectivity Wireless Android Auto & Apple CarPlay"
+    },
+    {
+      "name": "Steering Mounted Controls: Audio and Bluetooth"
+    },
+    {
+      "name": "Steering wheel with audio & bluetooth controls"
+    },
+    {
+      "name": "Voice recognition**"
+    }
+  ],
+  "Interior": [
+    {
+      "name": "2-step rear reclining seat"
+    },
+    {
+      "name": "60:40 Folding Rear Seats"
+    },
+    {
+      "name": "Ambient Lighting"
+    },
+    {
+      "name": "Cup Holders"
+    },
+    {
+      "name": "D-Cut steering wheel"
+    },
+    {
+      "name": "Digital Instrument Cluster"
+    },
+    {
+      "name": "Door Armrest"
+    },
+    {
+      "name": "Door scuff plates"
+    },
+    {
+      "name": "Door scuff plates(Metal)"
+    },
+    {
+      "name": "Driver power seat memory function"
+    },
+    {
+      "name": "Driver seat adjust Electric 8 way"
+    },
+    {
+      "name": "Dual Tone Interior"
+    },
+    {
+      "name": "Front Footwell Light"
+    },
+    {
+      "name": "Front row seat back table with IT device holder & retractable cup holder"
+    },
+    {
+      "name": "Glove Box Illumination"
+    },
+    {
+      "name": "Glove Box Light"
+    },
+    {
+      "name": "Head Up Display"
+    },
+    {
+      "name": "Height Adjustable Driver Seat"
+    },
+    {
+      "name": "Height adjustable Front headrest"
+    },
+    {
+      "name": "Height adjustable Rear Headrest"
+    },
+    {
+      "name": "Inside Door Handle"
+    },
+    {
+      "name": "Interiors All black interiors with brass coloured inserts"
+    },
+    {
+      "name": "Leather Wrapped Steering Wheel"
+    },
+    {
+      "name": "Leather^ pack Gear Knob"
+    },
+    {
+      "name": "LED Trunk Lamp"
+    },
+    {
+      "name": "Luggage Lamp"
+    },
+    {
+      "name": "MID Display"
+    },
+    {
+      "name": "Passenger seat electric 8-way adjust"
+    },
+    {
+      "name": "Passenger seat walkin device"
+    },
+    {
+      "name": "Passenger Side Sunvisor with Vanity Mirror"
+    },
+    {
+      "name": "Plush Door Armrest"
+    },
+    {
+      "name": "Rear parcel tray"
+    },
+    {
+      "name": "Rear seat headrest cushion"
+    },
+    {
+      "name": "Rear window sunshade"
+    },
+    {
+      "name": "Seat Upholstery Exclusive black fabric seat upholstery"
+    },
+    {
+      "name": "Seat Upholstery Exclusive black leather^ seat upholstery with brass coloured highlights"
+    },
+    {
+      "name": "Seat Upholstery Fabric"
+    },
+    {
+      "name": "Seat Upholstery Leather ^"
+    },
+    {
+      "name": "Seat Upholstery Semi Leather ^"
+    },
+    {
+      "name": "Sliding Armrest with Utility Box (Front Row)"
+    },
+    {
+      "name": "Sporty metal pedals"
+    },
+    {
+      "name": "Spot Map Lamp (Roof front)"
+    }
+  ],
+  "Safety": [
+    {
+      "name": "3 Point seat belts (all seats)"
+    },
+    {
+      "name": "360 View Camera"
+    },
+    {
+      "name": "6 Airbags"
+    },
+    {
+      "name": "ABS"
+    },
+    {
+      "name": "ABS with EBD"
+    },
+    {
+      "name": "ABS with EBD and Brake Assist"
+    },
+    {
+      "name": "Automatic headlamps"
+    },
+    {
+      "name": "Brake Assist"
+    },
+    {
+      "name": "Burglar alarm"
+    },
+    {
+      "name": "Central Locking"
+    },
+    {
+      "name": "Dash cam"
+    },
+    {
+      "name": "Driver Airbag"
+    },
+    {
+      "name": "Driver anchor pretensioner"
+    },
+    {
+      "name": "Driver Power window with auto up down and safety"
+    },
+    {
+      "name": "Driver rear view monitor (DRVM)"
+    },
+    {
+      "name": "EBD"
+    },
+    {
+      "name": "Electronic Parking Brake"
+    },
+    {
+      "name": "Electronic Stability Program (ESP)"
+    },
+    {
+      "name": "Electronic Stability Program (ESP) with Hill Hold Control"
+    },
+    {
+      "name": "Emergency stop signal (ESS)"
+    },
+    {
+      "name": "Front & Rear Parking Sensors"
+    },
+    {
+      "name": "Front Seat Belt Height Adjuster"
+    },
+    {
+      "name": "Headlamp escort function"
+    },
+    {
+      "name": "High Speed Alert System"
+    },
+    {
+      "name": "Hill Descent Control"
+    },
+    {
+      "name": "Hill Hold Control"
+    },
+    {
+      "name": "Hyundai SmartSense (Advanced driver assistance system) Blind-spot Collision - Avoidance Assist (BCA)"
+    },
+    {
+      "name": "Hyundai SmartSense (Advanced driver assistance system) Blind-spot Collision Warning (BCW)"
+    },
+    {
+      "name": "Hyundai SmartSense (Advanced driver assistance system) Blind-spot view monitor (BVM)"
+    },
+    {
+      "name": "Hyundai SmartSense (Advanced driver assistance system) Driver Attention Warning (DAW)"
+    },
+    {
+      "name": "Hyundai SmartSense (Advanced driver assistance system) Forward Collision - Avoidance Assist - Car (FCA-Car)"
+    },
+    {
+      "name": "Hyundai SmartSense (Advanced driver assistance system) Forward Collision - Avoidance Assist - Cycle (FCA-Cyl)"
+    },
+    {
+      "name": "Hyundai SmartSense (Advanced driver assistance system) Forward Collision - Avoidance Assist - Junction Turning (FCA-JT)"
+    },
+    {
+      "name": "Hyundai SmartSense (Advanced driver assistance system) Forward Collision - Avoidance Assist - Pedestrian (FCA-Ped)"
+    },
+    {
+      "name": "Hyundai SmartSense (Advanced driver assistance system) Forward Collision Warning (FCW)"
+    },
+    {
+      "name": "Hyundai SmartSense (Advanced driver assistance system) High Beam Assist (HBA)"
+    },
+    {
+      "name": "Hyundai SmartSense (Advanced driver assistance system) Lane Departure Warning (LDW)"
+    },
+    {
+      "name": "Hyundai SmartSense (Advanced driver assistance system) Lane Following Assist (LFA)"
+    },
+    {
+      "name": "Hyundai SmartSense (Advanced driver assistance system) Lane Keeping Assist (LKA)"
+    },
+    {
+      "name": "Hyundai SmartSense (Advanced driver assistance system) Leading Vehicle Departure Alert (LVDA)"
+    },
+    {
+      "name": "Hyundai SmartSense (Advanced driver assistance system) Rear Cross - Traffic Collision - Avoidance Assist (RCCA)"
+    },
+    {
+      "name": "Hyundai SmartSense (Advanced driver assistance system) Rear Cross - Traffic Collision Warning (RCCW)"
+    },
+    {
+      "name": "Hyundai SmartSense (Advanced driver assistance system) Safe Exit Warning (SEW)"
+    },
+    {
+      "name": "Hyundai SmartSense (Advanced driver assistance system) Smart Cruise Control with Stop & Go (SCC with S&G)"
+    },
+    {
+      "name": "Immobilizer (Anti-Theft Security System)"
+    },
+    {
+      "name": "Impact sensing auto door unlock"
+    },
+    {
+      "name": "Inside door override (Driver only)"
+    },
+    {
+      "name": "Inside rear Day and night mirror"
+    },
+    {
+      "name": "Inside rear Day and night mirror with telematics switches"
+    },
+    {
+      "name": "Inside rear Electro chromic mirror (ECM) with telematics switches"
+    },
+    {
+      "name": "ISOFIX Child Seat Anchorages"
+    },
+    {
+      "name": "Parking assist Front Parking sensors"
+    },
+    {
+      "name": "Puddle lamps with welcome function"
+    },
+    {
+      "name": "Rear defogger with timer"
+    },
+    {
+      "name": "Rear disc brakes"
+    },
+    {
+      "name": "Rear Parking Camera"
+    },
+    {
+      "name": "Reverse Parking Camera"
+    },
+    {
+      "name": "Reverse Parking Sensors"
+    },
+    {
+      "name": "Seat belt pretensioners - driver & passenger"
+    },
+    {
+      "name": "Seat Belt Reminder"
+    },
+    {
+      "name": "Seat Belt Reminder (Front & Rear Seats)"
+    },
+    {
+      "name": "Seat Belt Reminder-Lamp & Buzzer"
+    },
+    {
+      "name": "Side & Curtain Airbags"
+    },
+    {
+      "name": "Speed sensing auto door lock"
+    },
+    {
+      "name": "Speed Warning Buzzer"
+    },
+    {
+      "name": "Tyre-Pressure Monitoring System (TPMS)"
+    },
+    {
+      "name": "Vehicle stability management (VSM)"
+    },
+    {
+      "name": "Warning Lamps for Low Fuel & Door Ajar"
+    }
+  ],
+  "Suspension": [
+    {
+      "name": "Front Suspension"
+    },
+    {
+      "name": "Rear Suspension"
+    },
+    {
+      "name": "Shock Absorber"
+    }
+  ],
+  "Transmission": [
+    {
+      "name": "Drive Type"
+    },
+    {
+      "name": "Transmission Type"
+    }
+  ],
+  "Tyre": [
+    {
+      "name": "Spare wheel"
+    },
+    {
+      "name": "Tyre"
+    },
+    {
+      "name": "Wheel Type"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+psycopg2-binary
+python-dotenv
+pydantic
+openpyxl
+python-multipart
+pandas
+google-genai
+pydantic-settings
+pandas
+openpyxl
+httpx
+sqlalchemy

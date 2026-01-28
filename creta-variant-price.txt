@@ -1,0 +1,102 @@
+variant_groups = {
+    "E": {
+        "Creta 1.5 MPi Petrol MT E": 1072589,
+        "Creta 1.5 CRDi Diesel MT DSL E": 1224947
+    },
+
+    "EX": {
+        "Creta 1.5 MPi Petrol MT EX": 1189708,
+        "Creta 1.5 CRDi Diesel MT DSL EX": 1343513
+    },
+
+    "EX(O)": {
+        "Creta 1.5 MPi Petrol MT EX(O)": 1252455,
+        "Creta 1.5 MPi Petrol IVT EX(O)": 1387627,
+        "Creta 1.5 CRDi Diesel MT DSL EX(O)": 1406261,
+        "Creta 1.5 CRDi Diesel AT DSL EX(O)": 1541433
+    },
+
+    "S(O)": {
+        "Creta 1.5 MPi Petrol MT S(O)": 1398923,
+        "Creta 1.5 MPi Petrol IVT S(O)": 1543780,
+    },
+
+    "S(O) Knight": {
+        "Creta 1.5 MPi Petrol MT S(O) Knight Edition": 1417181,
+        "Creta 1.5 MPi Petrol IVT S(O) Knight Edition": 1558215,
+        "Creta 1.5 MPi Petrol MT S(O) DT Knight Edition": 1425871,
+        "Creta 1.5 CRDi Diesel MT DSL S(O) Knight Edition": 1570022,
+        "Creta 1.5 CRDi Diesel MT DSL S(O) DT Knight Edition": 1578712,
+        "Creta 1.5 CRDi Diesel MT DSL S(O) DT Knight Edition 2": 1723539,
+        "Creta 1.5 MPi Petrol IVT S(O) DT Knight Edition": 1570898,
+        
+    }
+    "SX": {
+        "Creta 1.5 MPi Petrol MT SX": 1494038,
+        "Creta 1.5 MPi Petrol MT SX DT": 1508519,
+        "Creta 1.5 CRDi Diesel MT DSL SX": 1551774
+    },
+
+    "SX Tech": {
+        "Creta 1.5 MPi Petrol MT SX Tech": 1569348,
+        "Creta 1.5 MPi Petrol MT SX Tech DT": 1583829,
+        "Creta 1.5 MPi Petrol IVT SX Tech": 1714173,
+        "Creta 1.5 MPi Petrol IVT SX Tech DT": 1728656,
+        "Creta 1.5 CRDi Diesel MT DSL SX Tech": 1722187,
+        "Creta 1.5 CRDi Diesel MT DSL SX Tech DT": 1736670
+    },
+
+    "SX Premium": {
+        "Creta 1.5 MPi Petrol MT SX Premium": 1578028,
+        "Creta 1.5 MPi Petrol MT SX Premium DT": 1592509,
+        "Creta 1.5 MPi Petrol IVT SX Premium": 1722853,
+        "Creta 1.5 MPi Petrol IVT SX Premium DT": 1737336,
+        "Creta 1.5 CRDi Diesel MT DSL SX Premium": 1730867,
+        "Creta 1.5 CRDi Diesel MT DSL SX Premium DT": 1745350
+    },
+
+    "SX(O)": {
+        "Creta 1.5 MPi Petrol MT SX(O)": 1688077,
+        "Creta 1.5 MPi Petrol MT SX(O) Knight Edition": 1700463,
+        "Creta 1.5 MPi Petrol MT SX(O) DT": 1700560,
+        "Creta 1.5 MPi Petrol MT SX(O) DT Knight Edition": 1714946,
+        "Creta 1.5 MPi Petrol IVT SX(O)": 1827042,
+        "Creta 1.5 MPi Petrol IVT SX(O) Knight Edition": 1841428,
+        "Creta 1.5 MPi Petrol IVT SX(O) DT": 1841525,
+        "Creta 1.5 MPi Petrol IVT SX(O) DT Knight Edition": 1855911,
+        "Creta 1.5 Turbo Petrol DCT SX(O)": 1949276,
+        "Creta 1.5 Turbo Petrol DCT SX(O) DT": 1963759,
+        "Creta 1.5 CRDi Diesel AT DSL SX(O)": 1696601,
+        "Creta 1.5 CRDi Diesel AT DSL SX(O) Knight Edition": 1709056,
+        "Creta 1.5 CRDi Diesel AT DSL SX(O) 2": 1930931,
+        "Creta 1.5 CRDi Diesel AT DSL SX(O) DT": 1945414,
+        "Creta 1.5 CRDi Diesel AT DSL SX(O) Knight Edition": 1964628,
+        "Creta 1.5 CRDi Diesel MT DSL SX(O)": 1839014,
+        "Creta 1.5 CRDi Diesel MT DSL SX(O) Knight Edition": 1853400,
+        "Creta 1.5 CRDi Diesel MT DSL SX(O) DT": 1853497,
+        "Creta 1.5 CRDi Diesel MT DSL SX(O) DT Knight Edition": 1867883
+    },
+
+    "King": {
+        "Creta 1.5 MPi Petrol MT King": 1726822,
+        "Creta 1.5 MPi Petrol MT King DT": 1741304,
+        "Creta 1.5 MPi Petrol IVT King": 1867787,
+        "Creta 1.5 MPi Petrol IVT King DT": 1882269,
+        "Creta 1.5 MPi Petrol IVT King Limited Edition": 1896559,
+        "Creta 1.5 Turbo Petrol DCT King": 1990021,
+        "Creta 1.5 Turbo Petrol DCT King DT": 2004503,
+        "Creta 1.5 CRDi Diesel MT DSL King": 1879759,
+        "Creta 1.5 CRDi Diesel MT DSL King DT": 1894242,
+        "Creta 1.5 CRDi Diesel AT DSL King": 1971676,
+        "Creta 1.5 CRDi Diesel AT DSL King DT": 1979110,
+        "Creta 1.5 CRDi Diesel AT DSL King Limited Edition": 2005372
+    },
+
+    "King Knight": {
+        "Creta 1.5 MPi Petrol IVT King Knight Edition": 1882173,
+        "Creta 1.5 MPi Petrol IVT King DT Knight Edition": 1896655,
+        "Creta 1.5 CRDi Diesel AT DSL King Knight Edition": 1986159,
+        "Creta 1.5 CRDi Diesel AT DSL King DT Knight Edition": 2019758,
+        "Creta 1.5 CRDi Diesel AT DSL King DT Knight Edition 2": 2019855
+    }
+}
