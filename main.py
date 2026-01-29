@@ -515,7 +515,7 @@ def get_pricing(brand_name: str, car_name: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/v1/pricing")
+@app.get("/api/v1/pricing")
 def get_pricing(brand_name: str, car_name: str):
     try:
         pricing_data = pricing_db.get_pricing_by_brand_and_car_v1(
