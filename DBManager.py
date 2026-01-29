@@ -33,6 +33,9 @@ CATEGORY_REMAP = {
 
 class DbManager:
     def __init__(self):
+        self.connect()
+
+    def connect(self):
         self.conn = psycopg2.connect(
             user=os.getenv("user"),
             password=os.getenv("password"),
@@ -41,7 +44,17 @@ class DbManager:
             dbname=os.getenv("dbname")
         )
         self.conn.autocommit = True
+    
+    def get_conn(self):
+        try:
+            # Ping connection
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT 1")
+        except Exception:
+            print("🔄 Reconnecting to database...")
+            self.connect()
 
+        return self.conn
 
 class BrandDbManager(DbManager):
     def __init__(self):
@@ -55,7 +68,7 @@ class BrandDbManager(DbManager):
         RETURNING id, name;
         """
 
-        with self.conn.cursor() as cursor:
+        with self.get_conn().cursor() as cursor:
             cursor.execute(query, (brand_name,))
             result = cursor.fetchone()
 
@@ -75,7 +88,7 @@ class BrandDbManager(DbManager):
         query = """
         SELECT id FROM brands WHERE name = %s;
         """
-        with self.conn.cursor() as cursor:
+        with self.get_conn().cursor() as cursor:
             cursor.execute(query, (brand_name,))
             result = cursor.fetchone()
             return result[0] if result else None
@@ -87,7 +100,7 @@ class BrandDbManager(DbManager):
         ORDER BY name;
         """
 
-        with self.conn.cursor() as cur:
+        with self.get_conn().cursor() as cur:
             cur.execute(query)
             rows = cur.fetchall()
 
@@ -108,7 +121,7 @@ class CarDbManager(DbManager):
         RETURNING id, name;
         """
 
-        with self.conn.cursor() as cursor:
+        with self.get_conn().cursor() as cursor:
             cursor.execute(query, (brand_id, car_name))
             result = cursor.fetchone()
 
@@ -132,7 +145,7 @@ class CarDbManager(DbManager):
         ORDER BY name;
         """
 
-        with self.conn.cursor() as cur:
+        with self.get_conn().cursor() as cur:
             cur.execute(query, (brand_id,))
             rows = cur.fetchall()
 
@@ -152,7 +165,7 @@ class VariantDbManager(DbManager):
         JOIN brands b ON b.id = c.brand_id
         WHERE b.name = %s AND c.name = %s;
         """
-        with self.conn.cursor() as cur:
+        with self.get_conn().cursor() as cur:
             cur.execute(query, (brand_name, car_name))
             row = cur.fetchone()
             return row[0] if row else None
@@ -164,7 +177,7 @@ class VariantDbManager(DbManager):
         ON CONFLICT (car_id, name, version) DO NOTHING
         RETURNING id, name;
         """
-        with self.conn.cursor() as cur:
+        with self.get_conn().cursor() as cur:
             cur.execute(query, (car_id, variant_name, version))
             row = cur.fetchone()
 
@@ -197,7 +210,7 @@ class VariantDbManager(DbManager):
         ORDER BY v.name;
         """
 
-        with self.conn.cursor() as cursor:
+        with self.get_conn().cursor() as cursor:
             cursor.execute(query, (brand_name, car_name))
             rows = cursor.fetchall()
 
@@ -228,7 +241,7 @@ class VariantDbManager(DbManager):
         ORDER BY b.name, c.name, v.name;
         """
 
-        with self.conn.cursor() as cursor:
+        with self.get_conn().cursor() as cursor:
             cursor.execute(query)
             rows = cursor.fetchall()
 
@@ -265,7 +278,7 @@ class VariantDbManager(DbManager):
             WHERE v.id = %s AND v.version = %s
         """
         
-        with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with self.get_conn().cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(query, (variant_id, version))
             result = cur.fetchone()
             return dict(result) if result else None
@@ -322,7 +335,7 @@ class VariantDbManager(DbManager):
         query += " ORDER BY b.name, c.name, p.ex_showroom_price LIMIT %s"
         params.append(limit)
         
-        with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with self.get_conn().cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(query, tuple(params))
             results = cur.fetchall()
             return [dict(row) for row in results]
@@ -335,7 +348,7 @@ class VariantDbManager(DbManager):
         ORDER BY name;
         """
 
-        with self.conn.cursor() as cur:
+        with self.get_conn().cursor() as cur:
             cur.execute(query, (car_id,))
             rows = cur.fetchall()
 
@@ -368,7 +381,7 @@ class PricingDbManager(DbManager):
         if not pricing_list:
             return {"status": "no_data"}
 
-        with self.conn.cursor() as cursor:
+        with self.get_conn().cursor() as cursor:
             for item in pricing_list:
                 variant_id = item["variant_id"]
                 price = item["ex_showroom_price"]
@@ -433,7 +446,7 @@ class PricingDbManager(DbManager):
         ORDER BY v.name, p.fuel_type, p.transmission_type;
         """
 
-        with self.conn.cursor() as cursor:
+        with self.get_conn().cursor() as cursor:
             cursor.execute(query, (brand_name, car_name))
             rows = cursor.fetchall()
 
@@ -476,7 +489,7 @@ class PricingDbManager(DbManager):
         ORDER BY p.ex_showroom_price DESC;
         """
 
-        with self.conn.cursor() as cursor:
+        with self.get_conn().cursor() as cursor:
             cursor.execute(query, (brand_name, car_name))
             rows = cursor.fetchall()
 
@@ -499,7 +512,7 @@ class PricingDbManager(DbManager):
         SET ex_showroom_price = %s 
         WHERE variant_id = %s AND is_latest = true;
         """
-        with self.conn.cursor() as cursor:
+        with self.get_conn().cursor() as cursor:
             cursor.execute(query, (new_price, variant_id))
             self.conn.commit()
             return cursor.rowcount > 0
@@ -511,7 +524,7 @@ class PricingDbManager(DbManager):
         INSERT INTO pricing (variant_id, ex_showroom_price, type, is_latest, currency)
         VALUES (%s, %s, %s, true, 'INR');
         """
-        with self.conn.cursor() as cursor:
+        with self.get_conn().cursor() as cursor:
             cursor.execute(query, (variant_id, price, p_type))
             self.conn.commit()
             return True
@@ -534,7 +547,7 @@ class PricingDbManager(DbManager):
             AND is_latest = true
         """
 
-        with self.conn.cursor() as cursor:
+        with self.get_conn().cursor() as cursor:
             cursor.execute(query, (variant_id, version))
             row = cursor.fetchone()
 
@@ -569,7 +582,7 @@ class PricingDbManager(DbManager):
             AND is_latest = true
         """
 
-        with self.conn.cursor() as cursor:
+        with self.get_conn().cursor() as cursor:
             cursor.execute(query, (variant_id, version))
             rows = cursor.fetchall()
 
@@ -606,7 +619,7 @@ class PricingDbManager(DbManager):
             WHERE variant_id = %s AND version = %s
         """
         
-        with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with self.get_conn().cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(query, (variant_id, version))
             result = cur.fetchone()
             return dict(result) if result else None
@@ -633,7 +646,7 @@ class FeatureDbManager(DbManager):
     #     ON CONFLICT (name, category) DO NOTHING;
     #     """
 
-    #     with self.conn.cursor() as cursor:
+    #     with self.get_conn().cursor() as cursor:
     #         for feature in features:
     #             cursor.execute(
     #                 query,
@@ -666,7 +679,7 @@ class FeatureDbManager(DbManager):
 
         inserted_count = 0
 
-        with self.conn.cursor() as cursor:
+        with self.get_conn().cursor() as cursor:
             for feature in features:
                 cursor.execute(
                     query,
@@ -688,7 +701,7 @@ class FeatureDbManager(DbManager):
             FROM features_master
             ORDER BY category, name;
         """
-        with self.conn.cursor() as cursor:
+        with self.get_conn().cursor() as cursor:
             cursor.execute(query)
             rows = cursor.fetchall()
 
@@ -817,7 +830,7 @@ class FeatureDbManager(DbManager):
 
         query += " ORDER BY category, name;"
 
-        with self.conn.cursor() as cur:
+        with self.get_conn().cursor() as cur:
             cur.execute(query, tuple(params))
             rows = cur.fetchall()
 
@@ -840,7 +853,7 @@ class FeatureDbManager(DbManager):
         LIMIT 1;
         """
 
-        with self.conn.cursor() as cur:
+        with self.get_conn().cursor() as cur:
             cur.execute(query, (variant_id, feature_id))
             row = cur.fetchone()
 
@@ -869,7 +882,7 @@ class FeatureDbManager(DbManager):
         ORDER BY fm.category, fm.name;
         """
 
-        with self.conn.cursor() as cur:
+        with self.get_conn().cursor() as cur:
             cur.execute(query, (variant_id,))
             rows = cur.fetchall()
 
@@ -884,7 +897,7 @@ class FeatureDbManager(DbManager):
         ]
 
     def update_variant_feature_value(self, variant_id: str, feature_id: str, value: str):
-        with self.conn.cursor() as cur:
+        with self.get_conn().cursor() as cur:
 
             # 1️⃣ Try update first
             cur.execute("""
@@ -908,7 +921,7 @@ class FeatureDbManager(DbManager):
 
     
     def create_feature(self, name: str, category: str, is_active: bool = True):
-        with self.conn.cursor() as cur:
+        with self.get_conn().cursor() as cur:
             try:
                 cur.execute("""
                     INSERT INTO features_master (
@@ -948,7 +961,7 @@ class FeatureDbManager(DbManager):
         ORDER BY category;
         """
 
-        with self.conn.cursor() as cur:
+        with self.get_conn().cursor() as cur:
             cur.execute(query)
             rows = cur.fetchall()
 
