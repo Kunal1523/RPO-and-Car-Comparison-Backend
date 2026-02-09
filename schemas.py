@@ -9,6 +9,8 @@ class GridLayout(BaseModel):
 class PlanData(BaseModel):
     regulationCells: Dict[str, List[str]]
     regOrder: Optional[List[str]] = None
+    customModels: List[str] = []
+    customRegulations: List[str] = []
     layout: Optional[GridLayout] = None
 
 # --- Draft Schemas ---
