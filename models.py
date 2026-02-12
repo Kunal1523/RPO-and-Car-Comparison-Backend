@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, BigInteger, JSON
+from sqlalchemy import Column, String, Integer, BigInteger, JSON, Boolean
 from database import Base
 
 class Draft(Base):
@@ -22,6 +22,7 @@ class Regulation(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     owner_email = Column(String, index=True)
     name = Column(String, index=True)
+    is_archived = Column(Boolean, default=False)
 
 class ModelItem(Base):
     """
@@ -31,6 +32,7 @@ class ModelItem(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     owner_email = Column(String, index=True)
     name = Column(String, index=True)
+    is_archived = Column(Boolean, default=False)
 
 class TenantUser(Base):
     __tablename__ = "tenant_users"
