@@ -160,7 +160,11 @@ pricing_db = PricingDbManager()
 feature_db = FeatureDbManager()
 
 
-
+class FeatureUpdateRequest(BaseModel):
+    variant_id: str
+    feature_id: str
+    value: str
+    version: int = 1
 
 class BrandCreateRequest(BaseModel):
     name: str
@@ -1576,6 +1580,38 @@ def compare_variants(payload: VariantCompareRequest):
         traceback.print_exc()
         raise HTTPException(500, str(e))
 
+# update feature value API endpoint
+@app.put("/api/variant/feature/update")
+def update_variant_feature(payload: FeatureUpdateRequest):
+
+    try:
+
+        updated = feature_db.update_variant_feature(
+            variant_id=payload.variant_id,
+            feature_id=payload.feature_id,
+            value=payload.value,
+            version=payload.version
+        )
+
+        if not updated:
+            raise HTTPException(
+                404,
+                "Variant or Feature not found"
+            )
+
+        return {
+            "status": "success",
+            "message": "Feature updated successfully"
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, str(e))
+
     
 # ============== HELPER API: Get Variant IDs ==============
 
@@ -2413,6 +2449,17 @@ async def share_final_plan(
 # ---------------------------
 # REGULATIONS (per-user)
 # ---------------------------
+# @app.get("/regulations", response_model=List[str])
+# def get_regulations(
+#     db: Session = Depends(get_db),
+#     current_user_email: str = Depends(get_current_user),
+# ):
+#     regs = (
+#         db.query(models.Regulation)
+#         .filter(models.Regulation.owner_email == current_user_email)
+#         .all()
+#     )
+#     return [r.name for r in regs]
 @app.get("/regulations", response_model=List[str])
 def get_regulations(
     db: Session = Depends(get_db),
@@ -2420,11 +2467,13 @@ def get_regulations(
 ):
     regs = (
         db.query(models.Regulation)
-        .filter(models.Regulation.owner_email == current_user_email)
+        .filter(
+            models.Regulation.owner_email == current_user_email,
+            models.Regulation.is_archived == False  # <--- Only active ones
+        )
         .all()
     )
     return [r.name for r in regs]
-
 
 @app.post("/regulations")
 def add_regulation(
@@ -2446,6 +2495,139 @@ def add_regulation(
     db.add(models.Regulation(owner_email=current_user_email, name=reg.name))
     db.commit()
     return {"ok": True, "name": reg.name}
+
+# ARCHIVE MODELS AND REGULATIONS 
+@app.post("/regulations/archive")
+def archive_regulation(name: str, db: Session = Depends(get_db), current_user_email: str = Depends(get_current_user)):
+    # Try to find existing item
+    item = db.query(models.Regulation).filter(
+        models.Regulation.owner_email == current_user_email, 
+        models.Regulation.name == name
+    ).first()
+    
+    if not item:
+        # If it doesn't exist in master list, create it as ARCHIVED
+        item = models.Regulation(
+            owner_email=current_user_email,
+            name=name,
+            is_archived=True
+        )
+        db.add(item)
+    else:
+        # If it exists, just flip the bit
+        item.is_archived = True
+        
+    db.commit()
+    return {"success": True, "message": f"{name} archived"}
+
+@app.post("/models/archive")
+def archive_model(name: str, db: Session = Depends(get_db), current_user_email: str = Depends(get_current_user)):
+    item = db.query(models.ModelItem).filter(
+        models.ModelItem.owner_email == current_user_email, 
+        models.ModelItem.name == name
+    ).first()
+    
+    if not item:
+        item = models.ModelItem(
+            owner_email=current_user_email,
+            name=name,
+            is_archived=True
+        )
+        db.add(item)
+    else:
+        item.is_archived = True
+        
+    db.commit()
+    return {"success": True, "message": f"{name} archived"}
+
+
+# DELETE MODELS AND REGULATION FROM ARCHIVE 
+# Permanent Delete for Models
+@app.delete("/models/permanent")
+def delete_model_permanent(name: str, db: Session = Depends(get_db), current_user_email: str = Depends(get_current_user)):
+    item = db.query(models.ModelItem).filter(
+        models.ModelItem.owner_email == current_user_email, 
+        models.ModelItem.name == name
+    ).first()
+    
+    if not item:
+        raise HTTPException(status_code=404, detail="Model not found")
+        
+    db.delete(item)
+    db.commit()
+    return {"success": True, "message": f"'{name}' deleted permanently from database"}
+
+# Permanent Delete for Regulations
+@app.delete("/regulations/permanent")
+def delete_regulation_permanent(name: str, db: Session = Depends(get_db), current_user_email: str = Depends(get_current_user)):
+    item = db.query(models.Regulation).filter(
+        models.Regulation.owner_email == current_user_email, 
+        models.Regulation.name == name
+    ).first()
+    
+    if not item:
+        raise HTTPException(status_code=404, detail="Regulation not found")
+        
+    db.delete(item)
+    db.commit()
+    return {"success": True, "message": f"'{name}' deleted permanently from database"}
+# @app.post("/models/archive")
+# def archive_model(name: str, db: Session = Depends(get_db), current_user_email: str = Depends(get_current_user)):
+#     item = db.query(models.ModelItem).filter(
+#         models.ModelItem.owner_email == current_user_email, 
+#         models.ModelItem.name == name
+#     ).first()
+#     if not item:
+#         raise HTTPException(status_code=404, detail="Model not found")
+#     item.is_archived = True
+#     db.commit()
+#     return {"success": True, "message": f"{name} moved to archive"}
+
+# @app.post("/regulations/archive")
+# def archive_regulation(name: str, db: Session = Depends(get_db), current_user_email: str = Depends(get_current_user)):
+#     item = db.query(models.Regulation).filter(
+#         models.Regulation.owner_email == current_user_email, 
+#         models.Regulation.name == name
+#     ).first()
+#     if not item:
+#         raise HTTPException(status_code=404, detail="Regulation not found")
+#     item.is_archived = True
+#     db.commit()
+#     return {"success": True, "message": f"{name} moved to archive"}
+
+
+# VIEW ARCHIVED ITEMS 
+# --- VIEW ARCHIVED ITEMS ---
+@app.get("/models/archived", response_model=List[str])
+def get_archived_models(db: Session = Depends(get_db), current_user_email: str = Depends(get_current_user)):
+    rows = db.query(models.ModelItem).filter(
+        models.ModelItem.owner_email == current_user_email,
+        models.ModelItem.is_archived == True
+    ).all()
+    return [r.name for r in rows]
+
+@app.get("/regulations/archived", response_model=List[str])
+def get_archived_regulations(db: Session = Depends(get_db), current_user_email: str = Depends(get_current_user)):
+    rows = db.query(models.Regulation).filter(
+        models.Regulation.owner_email == current_user_email,
+        models.Regulation.is_archived == True
+    ).all()
+    return [r.name for r in rows]
+
+# --- RESTORE FROM ARCHIVE ---
+@app.post("/models/restore")
+def restore_model(name: str, db: Session = Depends(get_db), current_user_email: str = Depends(get_current_user)):
+    item = db.query(models.ModelItem).filter(models.ModelItem.owner_email == current_user_email, models.ModelItem.name == name).first()
+    item.is_archived = False
+    db.commit()
+    return {"success": True, "message": f"{name} restored to master list"}
+
+@app.post("/regulations/restore")
+def restore_regulation(name: str, db: Session = Depends(get_db), current_user_email: str = Depends(get_current_user)):
+    item = db.query(models.Regulation).filter(models.Regulation.owner_email == current_user_email, models.Regulation.name == name).first()
+    item.is_archived = False
+    db.commit()
+    return {"success": True, "message": f"{name} restored to master list"}
 
 
 # @app.delete("/regulations/{name}")
@@ -2471,6 +2653,18 @@ def add_regulation(
 # ---------------------------
 # MODELS (per-user list used for compliance)
 # ---------------------------
+# @app.get("/models", response_model=List[str])
+# def get_models(
+#     db: Session = Depends(get_db),
+#     current_user_email: str = Depends(get_current_user),
+# ):
+#     rows = (
+#         db.query(models.ModelItem)
+#         .filter(models.ModelItem.owner_email == current_user_email)
+#         .all()
+#     )
+#     return [r.name for r in rows]
+
 @app.get("/models", response_model=List[str])
 def get_models(
     db: Session = Depends(get_db),
@@ -2478,10 +2672,13 @@ def get_models(
 ):
     rows = (
         db.query(models.ModelItem)
-        .filter(models.ModelItem.owner_email == current_user_email)
+        .filter(
+            models.ModelItem.owner_email == current_user_email,
+            models.ModelItem.is_archived == False  # <--- Only active ones
+        )
         .all()
     )
-    return [r.name for r in rows]
+    return [r.name for r in rows] 
 
 
 @app.post("/models")

@@ -283,6 +283,7 @@ class VariantDbManager(DbManager):
             result = cur.fetchone()
             return dict(result) if result else None
 
+    
 
     def get_comparable_variants(
         self,
@@ -969,6 +970,29 @@ class FeatureDbManager(DbManager):
             "categories": [r[0] for r in rows]
         }
 
+    def update_variant_feature(self, variant_id, feature_id, value, version=1):
+
+        query = """
+            UPDATE variant_features
+            SET value = %s
+            WHERE variant_id = %s
+            AND feature_id = %s
+            AND version = %s
+        """
+
+        with self.get_conn().cursor() as cur:
+            cur.execute(query, (
+                value,
+                variant_id,
+                feature_id,
+                version
+            ))
+
+            if cur.rowcount == 0:
+                return False   # No row updated
+
+            self.get_conn().commit()
+            return True
 
 
 
