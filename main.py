@@ -2,7 +2,7 @@ import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
-from DBManager import BrandDbManager, CarDbManager, VariantDbManager,PricingDbManager, FeatureDbManager
+from DBManager import BrandDbManager, CarDbManager, VariantDbManager,PricingDbManager, FeatureDbManager,ModelPlanDbManager, PlanFeatureDbManager
 from fastapi import UploadFile, File
 import openpyxl
 import pdb
@@ -20,6 +20,11 @@ from typing import List, Optional
 from pydantic import BaseModel
 from sqlalchemy import inspect, Table
 import time
+from dotenv import load_dotenv
+load_dotenv()
+
+print("ENV FILE PATH CHECK:", os.path.exists(".env"))
+
 
 import models, schemas
 from database import engine, get_db
@@ -35,12 +40,12 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 import time
 import httpx
-load_dotenv()
-
 
 SERPAPI_KEY = os.getenv("SERPAPI_KEY")
 userdbhandler = UserDBHandler()
 
+plan_db = ModelPlanDbManager()
+plan_feature_db = PlanFeatureDbManager()
 
 CLIENT_ID = os.getenv("MICROSOFT_CLIENT_ID")
 CLIENT_SECRET = os.getenv("MICROSOFT_CLIENT_SECRET")
@@ -214,6 +219,12 @@ class PricingQueryRequest(BaseModel):
 class VariantCompareRequest(BaseModel):
     variant_ids: List[str]
     version: int = 1
+
+class ClassCompareRequest(BaseModel):
+    variant_classes: List[str]  # ["Alpha", "Zeta"]
+    version: int = 1
+
+
 
 class PriceInsertRequest(BaseModel):
     variant_id: int
@@ -1580,6 +1591,314 @@ def compare_variants(payload: VariantCompareRequest):
         traceback.print_exc()
         raise HTTPException(500, str(e))
 
+@app.post("/api/compare/classes")
+def compare_variant_classes(payload: ClassCompareRequest):
+    try:
+        if len(payload.variant_classes) < 2:
+            raise HTTPException(400, "At least 2 variant classes required")
+        if len(payload.variant_classes) > 5:
+            raise HTTPException(400, "Maximum 5 variant classes allowed")
+
+        result = []
+
+        for class_name in payload.variant_classes:
+
+            # Step 1: Get all sub-variants under this class
+            sub_variants = variant_db.get_variants_by_class_name_only(
+                variant_class=class_name
+            )
+
+            if not sub_variants:
+                raise HTTPException(404, f"No variants found for class '{class_name}'")
+
+            car_id = sub_variants[0]["car_id"]   # ← per class, not global
+
+            # Step 2: Collect pricing + raw features per sub-variant
+            sub_variant_meta = []   # holds id, name, pricing for each sub-variant
+            features_per_sv = {}    # { sv_id: [ {feature_id, feature_name, category, value} ] }
+
+            for sv in sub_variants:
+
+                # Pricing
+                prices = pricing_db.get_all_prices(
+                    variant_id=sv["id"],
+                    version=payload.version
+                )
+                prices_list = []
+                for p in prices:
+                    if p.get("ex_showroom_price"):
+                        prices_list.append({
+                            "currency": p.get("currency", "INR"),
+                            "ex_showroom_price": float(p["ex_showroom_price"]),
+                            "fuel_type": p.get("fuel_type"),
+                            "engine_type": p.get("engine_type"),
+                            "transmission_type": p.get("transmission_type"),
+                            "paint_type": p.get("paint_type"),
+                            "edition": p.get("edition")
+                        })
+
+                sub_variant_meta.append({
+                    "variant_id": sv["id"],
+                    "variant_name": sv["name"],
+                    "pricing": prices_list
+                })
+
+                # Raw features keyed by sv id
+                features = feature_db.get_variant_features(
+                    variant_id=sv["id"],
+                    version=payload.version
+                )
+                features_per_sv[sv["name"]] = {
+                    f["feature_id"]: f for f in features
+                }
+
+            # Step 3: Merge features across all sub-variants
+            # Collect all unique feature_ids seen across every sub-variant
+            all_feature_ids = {}   # { feature_id: {feature_name, category} }
+            for sv_features in features_per_sv.values():
+                for fid, f in sv_features.items():
+                    if fid not in all_feature_ids:
+                        all_feature_ids[fid] = {
+                            "feature_name": f["feature_name"],
+                            "category": f["category"]
+                        }
+
+            # Build merged feature rows
+            merged_features = []
+            for feature_id, meta in all_feature_ids.items():
+                values = {}
+                for sv in sub_variants:
+                    sv_feats = features_per_sv[sv["name"]]
+                    values[sv["name"]] = sv_feats[feature_id].get("value", "") if feature_id in sv_feats else ""
+
+                # e.g. "sub_variant_values": { "sv_id_1": "Yes", "sv_id_2": "No", "sv_id_3": "360W" }
+                merged_features.append({
+                    "feature_id": feature_id,
+                    "feature_name": meta["feature_name"],
+                    "category": meta["category"],
+                    "sub_variant_values": {
+                        sv["name"]: values[sv["name"]] for sv in sub_variants
+                    }
+                })
+
+            result.append({
+                "variant_class": class_name,
+                "car_id": car_id,                       # ← per class
+                "sub_variants": sub_variant_meta,       # id, name, pricing only
+                "features": merged_features             # all features with per-sv values
+            })
+
+        return {
+            "success": True,
+            "data": result
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, str(e))
+
+
+
+class ClassDetailRequest(BaseModel):
+    variant_class: str  # "Alpha"
+    version: int = 1
+
+
+@app.get("/api/variant-class/{variant_class}")
+def get_variant_class_details(variant_class: str, version: int = 1):
+    try:
+        # Step 1: Get all sub-variants under this class
+        sub_variants = variant_db.get_variants_by_class_name_only(
+            variant_class=variant_class
+        )
+
+        if not sub_variants:
+            raise HTTPException(404, f"No variants found for class '{variant_class}'")
+
+        car_id = sub_variants[0]["car_id"]
+
+        # Step 2: Collect pricing + raw features per sub-variant
+        sub_variant_meta = []
+        features_per_sv = {}
+
+        for sv in sub_variants:
+
+            # Pricing
+            prices = pricing_db.get_all_prices(
+                variant_id=sv["id"],
+                version=version
+            )
+            prices_list = []
+            for p in prices:
+                if p.get("ex_showroom_price"):
+                    prices_list.append({
+                        "currency": p.get("currency", "INR"),
+                        "ex_showroom_price": float(p["ex_showroom_price"]),
+                        "fuel_type": p.get("fuel_type"),
+                        "engine_type": p.get("engine_type"),
+                        "transmission_type": p.get("transmission_type"),
+                        "paint_type": p.get("paint_type"),
+                        "edition": p.get("edition")
+                    })
+
+            sub_variant_meta.append({
+                "variant_id": sv["id"],
+                "variant_name": sv["name"],
+                "pricing": prices_list
+            })
+
+            # Raw features keyed by sv name
+            features = feature_db.get_variant_features(
+                variant_id=sv["id"],
+                version=version
+            )
+            features_per_sv[sv["name"]] = {
+                f["feature_id"]: f for f in features
+            }
+
+        # Step 3: Merge features across all sub-variants
+        all_feature_ids = {}
+        for sv_features in features_per_sv.values():
+            for fid, f in sv_features.items():
+                if fid not in all_feature_ids:
+                    all_feature_ids[fid] = {
+                        "feature_name": f["feature_name"],
+                        "category": f["category"]
+                    }
+
+        merged_features = []
+        for feature_id, meta in all_feature_ids.items():
+            values = {}
+            for sv in sub_variants:
+                sv_feats = features_per_sv[sv["name"]]
+                values[sv["name"]] = sv_feats[feature_id].get("value", "") if feature_id in sv_feats else ""
+
+            merged_features.append({
+                "feature_id": feature_id,
+                "feature_name": meta["feature_name"],
+                "category": meta["category"],
+                "sub_variant_values": {
+                    sv["name"]: values[sv["name"]] for sv in sub_variants
+                }
+            })
+
+        return {
+            "success": True,
+            "data": {
+                "variant_class": variant_class,
+                "car_id": car_id,
+                "sub_variants": sub_variant_meta,
+                "features": merged_features
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, str(e))
+
+# @app.post("/api/compare/classes")
+# def compare_variant_classes(payload: ClassCompareRequest):
+#     """
+#     Compare variant classes (e.g. Alpha vs Zeta).
+#     Each class expands into its sub-variants.
+#     Features are returned per sub-variant separately — no merging.
+#     """
+#     try:
+#         if len(payload.variant_classes) < 2:
+#             raise HTTPException(400, "At least 2 variant classes required")
+
+#         if len(payload.variant_classes) > 5:
+#             raise HTTPException(400, "Maximum 5 variant classes allowed")
+
+#         result = []
+#         resolved_car_id = None
+
+#         for class_name in payload.variant_classes:
+
+#             # Step 1: Get all sub-variants under this class
+#             sub_variants = variant_db.get_variants_by_class_name_only(
+#                 variant_class=class_name
+#             )
+
+#             if not sub_variants:
+#                 raise HTTPException(404, f"No variants found for class '{class_name}'")
+            
+#             if resolved_car_id is None:
+#                 resolved_car_id = sub_variants[0]["car_id"]
+            
+#             sub_variant_data = []
+
+#             for sv in sub_variants:
+
+#                 # Step 2: Pricing per sub-variant
+#                 prices = pricing_db.get_all_prices(
+#                     variant_id=sv["id"],
+#                     version=payload.version
+#                 )
+
+#                 prices_list = []
+#                 for p in prices:
+#                     if p.get("ex_showroom_price"):
+#                         prices_list.append({
+#                             "currency": p.get("currency", "INR"),
+#                             "ex_showroom_price": float(p["ex_showroom_price"]),
+#                             "fuel_type": p.get("fuel_type"),
+#                             "engine_type": p.get("engine_type"),
+#                             "transmission_type": p.get("transmission_type"),
+#                             "paint_type": p.get("paint_type"),
+#                             "edition": p.get("edition")
+#                         })
+
+#                 # Step 3: Features per sub-variant (raw, no merging)
+#                 features = feature_db.get_variant_features(
+#                     variant_id=sv["id"],
+#                     version=payload.version
+#                 )
+
+#                 features_list = [
+#                     {
+#                         "feature_id": f["feature_id"],
+#                         "feature_name": f["feature_name"],
+#                         "category": f["category"],
+#                         "value": f.get("value", "")
+#                     }
+#                     for f in features
+#                 ]
+
+#                 sub_variant_data.append({
+#                     "variant_id": sv["id"],
+#                     "variant_name": sv["name"],
+#                     "pricing": prices_list,
+#                     "features": features_list
+#                 })
+
+#             result.append({
+#                 "variant_class": class_name,
+#                 "sub_variants": sub_variant_data
+#             })
+
+#         return {
+#             "success": True,
+#             "car_id": resolved_car_id,
+#             "data": result
+#         }
+
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         import traceback
+#         traceback.print_exc()
+#         raise HTTPException(500, str(e))
+
+
+
+
 # update feature value API endpoint
 @app.put("/api/variant/feature/update")
 def update_variant_feature(payload: FeatureUpdateRequest):
@@ -2133,6 +2452,207 @@ def insert_price(data: PriceInsertRequest):
         return {"success": True, "message": "New price record inserted successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/variants/classes/{car_id}")
+def get_variant_classes(car_id: str):
+    """Returns all variant classes with their variants grouped by class for a given car."""
+    try:
+        result = variant_db.get_variant_classes_by_car_id(car_id=car_id)
+        return {"success": True, "data": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+
+#  New model Planning (Car)
+
+
+from pydantic import BaseModel
+from typing import Optional
+from uuid import UUID
+
+class CreatePlanRequest(BaseModel):
+    name: str
+    base_variant_class: str
+    version: int = 1
+
+class UpdatePlanFeatureRequest(BaseModel):
+    value: Optional[str] = None
+    cost_delta: Optional[float] = None
+
+class AddPlanFeatureRequest(BaseModel):
+    feature_name: str
+    category: str
+    value: Optional[str] = None
+    cost_delta: float = 0
+    
+
+
+# Create a Plan 
+@app.post("/api/model-plans")
+def create_model_plan(payload: CreatePlanRequest):
+    try:
+        sub_variants = variant_db.get_variants_by_class_name_only(payload.base_variant_class)
+        if not sub_variants:
+            raise HTTPException(404, f"No variants found for class '{payload.base_variant_class}'")
+
+        car_id = sub_variants[0]["car_id"]
+
+        # Collect unique features across all sub-variants
+        all_features = {}
+        for sv in sub_variants:
+            features = feature_db.get_variant_features(variant_id=sv["id"], version=payload.version)
+            for f in features:
+                if f["feature_id"] not in all_features:
+                    all_features[f["feature_id"]] = {
+                        "feature_id": f["feature_id"],
+                        "feature_name": f["feature_name"],
+                        "category": f["category"],
+                        "value": f.get("value", "")
+                    }
+
+        plan = plan_db.create_plan(
+            name=payload.name,
+            base_variant_class=payload.base_variant_class,
+            base_car_id=str(car_id)
+        )
+        copied = plan_feature_db.bulk_insert_inherited_features(
+            plan_id=plan["plan_id"],
+            features=list(all_features.values())
+        )
+        return {"success": True, "data": {**plan, "features_copied": copied}}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/model-plans")
+def list_model_plans(base_variant_class: Optional[str] = None):
+    try:
+        return {"success": True, "data": plan_db.list_plans(base_variant_class)}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/model-plans/{plan_id}")
+def get_model_plan(plan_id: UUID):
+    try:
+        plan = plan_db.get_plan_by_id(str(plan_id))
+        if not plan:
+            raise HTTPException(404, "Plan not found")
+        features = plan_feature_db.get_features_by_plan(str(plan_id))
+        total_delta = sum(f["cost_delta"] for f in features)
+        return {"success": True, "data": {**plan, "features": features, "total_delta_cost": total_delta}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.patch("/api/model-plans/{plan_id}/features/{plan_feature_id}")
+def update_plan_feature(plan_id: UUID, plan_feature_id: UUID, payload: UpdatePlanFeatureRequest):
+    try:
+        result = plan_feature_db.update_feature(
+            plan_id=str(plan_id),
+            plan_feature_id=str(plan_feature_id),
+            value=payload.value,
+            cost_delta=payload.cost_delta
+        )
+        if not result:
+            raise HTTPException(404, "Feature not found in this plan")
+        return {"success": True, "data": result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/model-plans/{plan_id}/features")
+def add_plan_feature(plan_id: UUID, payload: AddPlanFeatureRequest):
+    try:
+        plan = plan_db.get_plan_by_id(str(plan_id))
+        if not plan:
+            raise HTTPException(404, "Plan not found")
+        result = plan_feature_db.add_custom_feature(
+            plan_id=str(plan_id),
+            feature_name=payload.feature_name,
+            category=payload.category,
+            value=payload.value,
+            cost_delta=payload.cost_delta
+        )
+        return {"success": True, "data": result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.delete("/api/model-plans/{plan_id}/features/{plan_feature_id}")
+def delete_plan_feature(plan_id: UUID, plan_feature_id: UUID):
+    try:
+        result = plan_feature_db.soft_delete_feature(str(plan_id), str(plan_feature_id))
+        if not result:
+            raise HTTPException(404, "Feature not found in this plan")
+        return {"success": True, "data": result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/model-plans/{plan_id}/delta")
+def get_plan_delta(plan_id: UUID):
+    try:
+        plan = plan_db.get_plan_by_id(str(plan_id))
+        if not plan:
+            raise HTTPException(404, "Plan not found")
+        return {"success": True, "data": plan_feature_db.get_delta_summary(str(plan_id))}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.delete("/api/model-plans/{plan_id}")
+def delete_model_plan(plan_id: UUID):
+    try:
+        name = plan_db.delete_plan(str(plan_id))
+        if not name:
+            raise HTTPException(404, "Plan not found")
+        return {"success": True, "data": {"deleted_plan": name}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
