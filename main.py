@@ -2506,12 +2506,13 @@ def create_model_plan(payload: CreatePlanRequest):
         for sv in sub_variants:
             features = feature_db.get_variant_features(variant_id=sv["id"], version=payload.version)
             for f in features:
-                if f["feature_id"] not in all_features:
-                    all_features[f["feature_id"]] = {
-                        "feature_id": f["feature_id"],
+                fid = f["feature_id"]
+                if fid not in all_features:
+                    all_features[fid] = {
+                        "feature_id": fid,
                         "feature_name": f["feature_name"],
                         "category": f["category"],
-                        "value": f.get("value", "")
+                        "value": None  # User will choose later
                     }
 
         plan = plan_db.create_plan(
@@ -2541,17 +2542,52 @@ def list_model_plans(base_variant_class: Optional[str] = None):
 
 
 @app.get("/api/model-plans/{plan_id}")
-def get_model_plan(plan_id: UUID):
+def get_model_plan(plan_id: UUID, version: int = 1):
     try:
         plan = plan_db.get_plan_by_id(str(plan_id))
         if not plan:
             raise HTTPException(404, "Plan not found")
+            
+        # Get plan features
         features = plan_feature_db.get_features_by_plan(str(plan_id))
+        
+        # Fetch original sub-variant values for options
+        sub_variants = variant_db.get_variants_by_class_name_only(plan["base_variant_class"])
+        options_map = {}
+        for sv in sub_variants:
+            sv_features = feature_db.get_variant_features(variant_id=sv["id"], version=version)
+            for f in sv_features:
+                fid = f["feature_id"]
+                val = f.get("value", "")
+                if fid not in options_map:
+                    options_map[fid] = set()
+                if val:
+                    options_map[fid].add(val)
+
+        # Attach options to inherited features
+        for f in features:
+            fid = f.get("feature_id")
+            if fid and f["is_inherited"] and fid in options_map:
+                f["available_options"] = sorted(list(options_map[fid]))
+            else:
+                f["available_options"] = []
+                
+            # Add a tag for UI convenience
+            f["tag"] = "Inherited" if f["is_inherited"] else "Additional"
+
         total_delta = sum(f["cost_delta"] for f in features)
-        return {"success": True, "data": {**plan, "features": features, "total_delta_cost": total_delta}}
+        return {
+            "success": True, 
+            "data": {
+                **plan, 
+                "features": features, 
+                "total_delta_cost": total_delta
+            }
+        }
     except HTTPException:
         raise
     except Exception as e:
+        import traceback; traceback.print_exc()
         raise HTTPException(500, str(e))
 
 
