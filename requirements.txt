@@ -12,3 +12,6 @@ pandas
 openpyxl
 httpx
 sqlalchemy
+langgraph
+langchain-google-genai
+langchain-core

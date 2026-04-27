@@ -27,6 +27,7 @@ print("ENV FILE PATH CHECK:", os.path.exists(".env"))
 
 
 import models, schemas
+from chatbot.router import router as chatbot_router
 from database import engine, get_db
 from dependencies import get_current_user
 import os
@@ -157,6 +158,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── Chatbot Module ──────────────────────────────────────
+app.include_router(chatbot_router)
+# ────────────────────────────────────────────────────────
 
 brand_db = BrandDbManager()
 car_db = CarDbManager()
@@ -1701,6 +1706,132 @@ def compare_variant_classes(payload: ClassCompareRequest):
         raise HTTPException(500, str(e))
 
 
+class MixedCompareRequest(BaseModel):
+    variant_classes: list[str] = []
+    plan_ids: list[str] = []
+    version: int = 1
+
+
+@app.post("/api/compare/mixed")
+def compare_mixed(payload: MixedCompareRequest):
+    try:
+        if len(payload.variant_classes) + len(payload.plan_ids) < 2:
+            raise HTTPException(400, "At least 2 items required to compare")
+
+        result = []
+
+        # 1. Process standard variant classes
+        for class_name in payload.variant_classes:
+            sub_variants = variant_db.get_variants_by_class_name_only(variant_class=class_name)
+            if not sub_variants:
+                continue
+
+            car_id = sub_variants[0]["car_id"]
+            sub_variant_meta = []
+            features_per_sv = {}
+
+            for sv in sub_variants:
+                prices = pricing_db.get_all_prices(variant_id=sv["id"], version=payload.version)
+                prices_list = []
+                for p in prices:
+                    if p.get("ex_showroom_price"):
+                        prices_list.append({
+                            "currency": p.get("currency", "INR"),
+                            "ex_showroom_price": float(p["ex_showroom_price"]),
+                            "fuel_type": p.get("fuel_type"),
+                            "engine_type": p.get("engine_type"),
+                            "transmission_type": p.get("transmission_type"),
+                            "paint_type": p.get("paint_type"),
+                            "edition": p.get("edition")
+                        })
+                sub_variant_meta.append({
+                    "variant_id": sv["id"],
+                    "variant_name": sv["name"],
+                    "pricing": prices_list
+                })
+
+                features = feature_db.get_variant_features(variant_id=sv["id"], version=payload.version)
+                features_per_sv[sv["name"]] = {f["feature_id"]: f for f in features}
+
+            all_feature_ids = {}
+            for sv_features in features_per_sv.values():
+                for fid, f in sv_features.items():
+                    if fid not in all_feature_ids:
+                        all_feature_ids[fid] = {
+                            "feature_name": f["feature_name"],
+                            "category": f["category"]
+                        }
+
+            merged_features = []
+            for feature_id, meta in all_feature_ids.items():
+                values = {}
+                for sv in sub_variants:
+                    sv_feats = features_per_sv[sv["name"]]
+                    values[sv["name"]] = sv_feats[feature_id].get("value", "") if feature_id in sv_feats else ""
+                
+                merged_features.append({
+                    "feature_id": feature_id,
+                    "feature_name": meta["feature_name"],
+                    "category": meta["category"],
+                    "sub_variant_values": {
+                        sv["name"]: values[sv["name"]] for sv in sub_variants
+                    }
+                })
+
+            result.append({
+                "variant_class": class_name,
+                "car_id": car_id,
+                "sub_variants": sub_variant_meta,
+                "features": merged_features
+            })
+
+        # 2. Process custom planned models
+        for plan_id in payload.plan_ids:
+            plan = plan_db.get_plan_by_id(str(plan_id))
+            if not plan:
+                continue
+
+            features = plan_feature_db.get_features_by_plan(str(plan_id))
+            plan_name = plan["name"]
+
+            # Normalize data structure
+            sub_variant_meta = [{
+                "variant_id": str(plan_id),
+                "variant_name": plan_name,
+                "pricing": []
+            }]
+
+            import uuid
+            merged_features = []
+            for f in features:
+                merged_features.append({
+                    "feature_id": f.get("feature_id", str(uuid.uuid4())),
+                    "feature_name": f["feature_name"],
+                    "category": f["category"],
+                    "sub_variant_values": {
+                        plan_name: f.get("value", "")
+                    }
+                })
+
+            result.append({
+                "variant_class": plan_name,
+                "car_id": plan.get("car_id", ""),
+                "sub_variants": sub_variant_meta,
+                "features": merged_features
+            })
+
+        return {
+            "success": True,
+            "data": result
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, str(e))
+
 
 class ClassDetailRequest(BaseModel):
     variant_class: str  # "Alpha"
@@ -2512,7 +2643,7 @@ def create_model_plan(payload: CreatePlanRequest):
                         "feature_id": fid,
                         "feature_name": f["feature_name"],
                         "category": f["category"],
-                        "value": None  # User will choose later
+                        "value": f.get("value")
                     }
 
         plan = plan_db.create_plan(

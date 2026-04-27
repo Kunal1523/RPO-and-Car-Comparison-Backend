@@ -1184,13 +1184,13 @@ class PlanFeatureDbManager(DbManager):
         """
         query = """
             INSERT INTO plan_features
-                (plan_id, feature_id, feature_name, category, value, is_inherited, cost_delta)
-            VALUES (%s, %s, %s, %s, %s, true, 0);
+                (plan_id, feature_id, feature_name, category, value, original_value, is_inherited, cost_delta)
+            VALUES (%s, %s, %s, %s, %s, %s, true, 0);
         """
         with self.get_conn() as conn:
             with conn.cursor() as cur:
                 cur.executemany(query, [
-                    (plan_id, f["feature_id"], f["feature_name"], f["category"], f.get("value", ""))
+                    (plan_id, f["feature_id"], f["feature_name"], f["category"], f.get("value", ""), f.get("value", ""))
                     for f in features
                 ])
                 conn.commit()
@@ -1199,7 +1199,7 @@ class PlanFeatureDbManager(DbManager):
     def get_features_by_plan(self, plan_id: str, include_deleted: bool = False):
         if include_deleted:
             query = """
-                SELECT id, feature_id, feature_name, category, value,
+                SELECT id, feature_id, feature_name, category, value, original_value,
                        is_inherited, is_deleted, cost_delta
                 FROM plan_features
                 WHERE plan_id = %s
@@ -1207,7 +1207,7 @@ class PlanFeatureDbManager(DbManager):
             """
         else:
             query = """
-                SELECT id, feature_id, feature_name, category, value,
+                SELECT id, feature_id, feature_name, category, value, original_value,
                        is_inherited, is_deleted, cost_delta
                 FROM plan_features
                 WHERE plan_id = %s AND is_deleted = false
@@ -1224,9 +1224,10 @@ class PlanFeatureDbManager(DbManager):
                 "feature_name": r[2],
                 "category": r[3],
                 "value": r[4],
-                "is_inherited": r[5],
-                "is_deleted": r[6],
-                "cost_delta": float(r[7] or 0)
+                "original_value": r[5],
+                "is_inherited": r[6],
+                "is_deleted": r[7],
+                "cost_delta": float(r[8] or 0)
             }
             for r in rows
         ]
@@ -1235,13 +1236,13 @@ class PlanFeatureDbManager(DbManager):
                            value: str = None, cost_delta: float = 0):
         query = """
             INSERT INTO plan_features
-                (plan_id, feature_id, feature_name, category, value, is_inherited, cost_delta)
-            VALUES (%s, NULL, %s, %s, %s, false, %s)
-            RETURNING id, feature_name, category, value, cost_delta;
+                (plan_id, feature_id, feature_name, category, value, original_value, is_inherited, cost_delta)
+            VALUES (%s, NULL, %s, %s, %s, %s, false, %s)
+            RETURNING id, feature_name, category, value, original_value, cost_delta;
         """
         with self.get_conn() as conn:
             with conn.cursor() as cur:
-                cur.execute(query, (plan_id, feature_name, category, value, cost_delta))
+                cur.execute(query, (plan_id, feature_name, category, value, value, cost_delta))
                 r = cur.fetchone()
                 conn.commit()
         return {
@@ -1249,7 +1250,8 @@ class PlanFeatureDbManager(DbManager):
             "feature_name": r[1],
             "category": r[2],
             "value": r[3],
-            "cost_delta": float(r[4] or 0),
+            "original_value": r[4],
+            "cost_delta": float(r[5] or 0),
             "is_inherited": False
         }
 
