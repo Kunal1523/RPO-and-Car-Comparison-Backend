@@ -363,6 +363,93 @@ class VariantDbManager(DbManager):
             for r in rows
         ]
     
+    def get_variants_by_class_name_only(self, variant_class: str):
+        """
+        Get all sub-variants under a specific class without needing car_id.
+        car_id is inferred from the class name itself.
+        """
+        query = """
+            SELECT id, name, version, is_latest, car_id
+        FROM variants
+        WHERE variant_class = %s
+        AND is_latest = true
+        ORDER BY name;
+    """
+
+        with self.get_conn().cursor() as cur:
+            cur.execute(query, (variant_class,))
+            rows = cur.fetchall()
+
+        return [
+            {
+                "id": r[0],
+                "name": r[1],
+                "version": r[2],
+                "is_latest": r[3],
+                "car_id": r[4]      # ← pulled from DB now
+            }
+            for r in rows
+        ]
+
+    def get_variant_classes_by_car_id(self, car_id: str):
+            query = """
+            SELECT 
+                variant_class,
+                JSON_AGG(
+                    JSON_BUILD_OBJECT(
+                        'id', id,
+                        'name', name,
+                        'version', version,
+                        'is_latest', is_latest
+                    ) ORDER BY name
+                ) AS variants
+            FROM variants
+            WHERE car_id = %s
+            AND is_latest = true
+            AND variant_class IS NOT NULL
+            GROUP BY variant_class
+            ORDER BY variant_class;
+            """
+
+            with self.get_conn().cursor() as cur:
+                cur.execute(query, (car_id,))
+                rows = cur.fetchall()
+
+            return [
+                {
+                    "variant_class": r[0],
+                    "variants": r[1]
+                }
+                for r in rows
+            ]
+        
+    def get_variants_by_class_name(self, car_id: str, variant_class: str):
+        """
+        Get all sub-variants under a specific class for a car.
+        """
+        query = """
+            SELECT id, name, version, is_latest
+            FROM variants
+            WHERE car_id = %s
+            AND variant_class = %s
+            AND is_latest = true
+            ORDER BY name;
+        """
+
+        with self.get_conn().cursor() as cur:
+            cur.execute(query, (car_id, variant_class))
+            rows = cur.fetchall()
+
+        return [
+            {
+                "id": r[0],
+                "name": r[1],
+                "version": r[2],
+                "is_latest": r[3]
+            }
+            for r in rows
+        ]
+
 class PricingDbManager(DbManager):
     def __init__(self):
         super().__init__()
@@ -996,3 +1083,250 @@ class FeatureDbManager(DbManager):
 
 
 
+
+class ModelPlanDbManager(DbManager):
+    def __init__(self):
+        super().__init__()
+
+    def create_plan(self, name: str, base_variant_class: str, base_car_id: str):
+        query = """
+            INSERT INTO model_plans (name, base_variant_class, base_car_id)
+            VALUES (%s, %s, %s)
+            RETURNING id, name, base_variant_class, base_car_id, created_at;
+        """
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (name, base_variant_class, base_car_id))
+                r = cur.fetchone()
+                conn.commit()
+        return {
+            "plan_id": str(r[0]),
+            "name": r[1],
+            "base_variant_class": r[2],
+            "base_car_id": str(r[3]),
+            "created_at": r[4].isoformat()
+        }
+
+    def get_plan_by_id(self, plan_id: str):
+        query = """
+            SELECT id, name, base_variant_class, base_car_id, created_at, updated_at
+            FROM model_plans
+            WHERE id = %s;
+        """
+        with self.get_conn().cursor() as cur:
+            cur.execute(query, (plan_id,))
+            r = cur.fetchone()
+        if not r:
+            return None
+        return {
+            "plan_id": str(r[0]),
+            "name": r[1],
+            "base_variant_class": r[2],
+            "base_car_id": str(r[3]),
+            "created_at": r[4].isoformat(),
+            "updated_at": r[5].isoformat()
+        }
+
+    def list_plans(self, base_variant_class: str = None):
+        if base_variant_class:
+            query = """
+                SELECT id, name, base_variant_class, base_car_id, created_at
+                FROM model_plans
+                WHERE base_variant_class = %s
+                ORDER BY created_at DESC;
+            """
+            params = (base_variant_class,)
+        else:
+            query = """
+                SELECT id, name, base_variant_class, base_car_id, created_at
+                FROM model_plans
+                ORDER BY created_at DESC;
+            """
+            params = ()
+
+        with self.get_conn().cursor() as cur:
+            cur.execute(query, params)
+            rows = cur.fetchall()
+
+        return [
+            {
+                "plan_id": str(r[0]),
+                "name": r[1],
+                "base_variant_class": r[2],
+                "base_car_id": str(r[3]),
+                "created_at": r[4].isoformat()
+            }
+            for r in rows
+        ]
+
+    def delete_plan(self, plan_id: str):
+        query = """
+            DELETE FROM model_plans
+            WHERE id = %s
+            RETURNING name;
+        """
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (plan_id,))
+                r = cur.fetchone()
+                conn.commit()
+        return r[0] if r else None
+
+
+class PlanFeatureDbManager(DbManager):
+    def __init__(self):
+        super().__init__()
+
+    def bulk_insert_inherited_features(self, plan_id: str, features: list):
+        """
+        features: list of { feature_id, feature_name, category, value }
+        Called once when plan is created to copy base class features.
+        """
+        query = """
+            INSERT INTO plan_features
+                (plan_id, feature_id, feature_name, category, value, original_value, is_inherited, cost_delta)
+            VALUES (%s, %s, %s, %s, %s, %s, true, 0);
+        """
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.executemany(query, [
+                    (plan_id, f["feature_id"], f["feature_name"], f["category"], f.get("value", ""), f.get("value", ""))
+                    for f in features
+                ])
+                conn.commit()
+        return len(features)
+
+    def get_features_by_plan(self, plan_id: str, include_deleted: bool = False):
+        if include_deleted:
+            query = """
+                SELECT id, feature_id, feature_name, category, value, original_value,
+                       is_inherited, is_deleted, cost_delta
+                FROM plan_features
+                WHERE plan_id = %s
+                ORDER BY category, feature_name;
+            """
+        else:
+            query = """
+                SELECT id, feature_id, feature_name, category, value, original_value,
+                       is_inherited, is_deleted, cost_delta
+                FROM plan_features
+                WHERE plan_id = %s AND is_deleted = false
+                ORDER BY category, feature_name;
+            """
+        with self.get_conn().cursor() as cur:
+            cur.execute(query, (plan_id,))
+            rows = cur.fetchall()
+
+        return [
+            {
+                "plan_feature_id": str(r[0]),
+                "feature_id": str(r[1]) if r[1] else None,
+                "feature_name": r[2],
+                "category": r[3],
+                "value": r[4],
+                "original_value": r[5],
+                "is_inherited": r[6],
+                "is_deleted": r[7],
+                "cost_delta": float(r[8] or 0)
+            }
+            for r in rows
+        ]
+
+    def add_custom_feature(self, plan_id: str, feature_name: str, category: str,
+                           value: str = None, cost_delta: float = 0):
+        query = """
+            INSERT INTO plan_features
+                (plan_id, feature_id, feature_name, category, value, original_value, is_inherited, cost_delta)
+            VALUES (%s, NULL, %s, %s, %s, %s, false, %s)
+            RETURNING id, feature_name, category, value, original_value, cost_delta;
+        """
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (plan_id, feature_name, category, value, value, cost_delta))
+                r = cur.fetchone()
+                conn.commit()
+        return {
+            "plan_feature_id": str(r[0]),
+            "feature_name": r[1],
+            "category": r[2],
+            "value": r[3],
+            "original_value": r[4],
+            "cost_delta": float(r[5] or 0),
+            "is_inherited": False
+        }
+
+    def update_feature(self, plan_id: str, plan_feature_id: str,
+                       value: str = None, cost_delta: float = None):
+        fields = []
+        values = []
+
+        if value is not None:
+            fields.append("value = %s")
+            values.append(value)
+        if cost_delta is not None:
+            fields.append("cost_delta = %s")
+            values.append(cost_delta)
+
+        if not fields:
+            return None
+
+        fields.append("updated_at = now()")
+        values.extend([plan_id, plan_feature_id])
+
+        query = f"""
+            UPDATE plan_features
+            SET {', '.join(fields)}
+            WHERE plan_id = %s AND id = %s AND is_deleted = false
+            RETURNING id, feature_name, value, cost_delta;
+        """
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, values)
+                r = cur.fetchone()
+                conn.commit()
+
+        if not r:
+            return None
+        return {
+            "plan_feature_id": str(r[0]),
+            "feature_name": r[1],
+            "value": r[2],
+            "cost_delta": float(r[3] or 0)
+        }
+
+    def soft_delete_feature(self, plan_id: str, plan_feature_id: str):
+        query = """
+            UPDATE plan_features
+            SET is_deleted = true, updated_at = now()
+            WHERE plan_id = %s AND id = %s
+            RETURNING id, feature_name;
+        """
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (plan_id, plan_feature_id))
+                r = cur.fetchone()
+                conn.commit()
+        return {"plan_feature_id": str(r[0]), "feature_name": r[1]} if r else None
+
+    def get_delta_summary(self, plan_id: str):
+        query = """
+            SELECT feature_name, cost_delta
+            FROM plan_features
+            WHERE plan_id = %s AND is_deleted = false AND cost_delta != 0
+            ORDER BY cost_delta DESC;
+        """
+        with self.get_conn().cursor() as cur:
+            cur.execute(query, (plan_id,))
+            rows = cur.fetchall()
+
+        breakdown = [
+            {"feature_name": r[0], "cost_delta": float(r[1])}
+            for r in rows
+        ]
+        total_delta = sum(b["cost_delta"] for b in breakdown)
+
+        return {
+            "total_delta": total_delta,
+            "delta_direction": "increase" if total_delta > 0 else "decrease" if total_delta < 0 else "neutral",
+            "breakdown": breakdown
+        }
