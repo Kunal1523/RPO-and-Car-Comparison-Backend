@@ -237,6 +237,14 @@ class PriceInsertRequest(BaseModel):
     type: str
 
 
+class FeedbackRequest(BaseModel):
+    email: str
+    feedback_text: str
+    page_url: str
+    project_type: str
+    timestamp: datetime
+
+
 
 
 def write_audit(db: Session, owner_email: str, action: str, details: dict):
@@ -345,6 +353,14 @@ class DraftRename(BaseModel):
 @app.get("/health")
 def health():
     return {"ok": True}
+
+@app.post("/api/feedback")
+async def save_feedback(payload: FeedbackRequest):
+    try:
+        userdbhandler.insert_feedback(payload.dict())
+        return {"status": "success", "message": "Feedback received"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/brands")
 def create_brand(payload: BrandCreateRequest):

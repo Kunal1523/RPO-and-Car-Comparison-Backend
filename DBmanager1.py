@@ -115,3 +115,36 @@ class UserDBHandler(DbManager):
         with self.conn.cursor() as cur:
             cur.execute(query, (access_token, refresh_token, expires_at, owner_email))
             self.conn.commit()
+
+    def insert_feedback(self, data: dict):
+        """
+        Insert user feedback into the user_feedback table
+        """
+        query = """
+        INSERT INTO user_feedback (
+            email,
+            feedback_text,
+            page_url,
+            project_type,
+            created_at
+        )
+        VALUES (%s, %s, %s, %s, %s)
+        RETURNING id;
+        """
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    query,
+                    (
+                        data["email"],
+                        data["feedback_text"],
+                        data["page_url"],
+                        data["project_type"],
+                        data["timestamp"]
+                    )
+                )
+                result = cur.fetchone()
+                return result
+        except Exception as e:
+            print("Error inserting feedback:", str(e))
+            raise
