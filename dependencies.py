@@ -26,6 +26,12 @@ def get_current_user(x_user_email: Optional[str] = Header(None)):
    
         
     owner_email = userdbhandler.get_owner_email(x_user_email)
+    
+    # ── Release connection immediately after use ──────────────────────────────
+    # For Supabase Free Tier, we must release as fast as possible.
+    from DBmanager1 import DbManager as UserDbManager
+    UserDbManager.release_conn()
+
     if not owner_email:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

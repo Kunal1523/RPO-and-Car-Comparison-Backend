@@ -59,6 +59,13 @@ def _llm(prompt: str, system: str = "", temperature: float = 0.1) -> str:
     return (response.text or "").strip()
 
 
+def summarize_chat_title(question: str) -> str:
+    """Uses LLM to create a very short (2-5 words) title for a chat thread."""
+    prompt = f"Create a very short, concise title (max 5 words) for a car chatbot conversation that starts with this question: '{question}'. Respond with ONLY the title text, no quotes or period."
+    title = _llm(prompt, temperature=0.0)
+    return title.strip().strip('"').strip("'")
+
+
 def _get_db_conn():
     """Open a fresh psycopg2 connection from env vars."""
     return psycopg2.connect(

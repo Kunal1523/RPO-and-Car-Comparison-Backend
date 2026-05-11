@@ -12,12 +12,9 @@ import sys
 from fastapi.middleware.cors import CORSMiddleware
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
-from DBmanager1 import UserDBHandler
-from fastapi import FastAPI,Request, Depends, HTTPException, Header
-from fastapi.middleware.cors import CORSMiddleware
+from DBmanager1 import UserDBHandler, DbManager as UserDbManager
+from DBManager import DbManager as ChatDbManager
 from sqlalchemy.orm import Session
-from typing import List, Optional
-from pydantic import BaseModel
 from sqlalchemy import inspect, Table
 import time
 from dotenv import load_dotenv
@@ -30,16 +27,10 @@ import models, schemas
 from chatbot.router import router as chatbot_router
 from database import engine, get_db
 from dependencies import get_current_user
-import os
-from dotenv import load_dotenv
-from fastapi import FastAPI,APIRouter, HTTPException,Depends,BackgroundTasks
-import requests
+from fastapi import APIRouter, BackgroundTasks,Depends,Request,Header
 from fastapi.responses import RedirectResponse, JSONResponse
-from pydantic import BaseModel
-import os
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
-import time
 import httpx
 
 SERPAPI_KEY = os.getenv("SERPAPI_KEY")
@@ -150,6 +141,18 @@ def get_loggers():
     )
 
 app = FastAPI(title="Car Compare API")
+
+# ── Middleware ─────────────────────────────────────────────────────────────
+
+@app.middleware("http")
+async def db_session_middleware(request: Request, call_next):
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        # Release psycopg2 connections back to their pools
+        ChatDbManager.release_conn()
+        UserDbManager.release_conn()
 
 app.add_middleware(
     CORSMiddleware,
@@ -690,7 +693,7 @@ def normalize_feature_master():
 @app.post("/admin/normalize-variants-and-pricing")
 def normalize_variants_and_pricing(brand_name: str, car_name: str):
     try:
-        conn = variant_db.conn
+        conn = variant_db.get_conn()
 
         with conn.cursor() as cursor:
 
@@ -982,7 +985,7 @@ def upload_variant_features_excel_fast(
 ):
     valid_logger, duplicate_logger, skipped_logger = get_loggers()
     valid_logger.info("=== API CALLED ===")
-    conn = feature_db.conn
+    conn = feature_db.get_conn()
     skipped_rows = []
 
     try:
@@ -2126,7 +2129,7 @@ def get_brands_and_cars():
             ORDER BY b.name, c.name
         """
         
-        with variant_db.conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with variant_db.get_conn().cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(query)
             results = cur.fetchall()
         
@@ -2244,7 +2247,7 @@ def get_variants_by_car(car_id: str):
             ORDER BY v.name, p.ex_showroom_price NULLS LAST
         """
 
-        with variant_db.conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with variant_db.get_conn().cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(query, (car_id,))
             rows = cur.fetchall()
 
@@ -2477,7 +2480,7 @@ def get_pricing_by_ids(brand_id: int, car_id: int):
         ORDER BY p.ex_showroom_price DESC;
         """
         
-        with pricing_db.conn.cursor() as cursor:
+        with pricing_db.get_conn().cursor() as cursor:
             cursor.execute(query, (brand_id, car_id))
             rows = cursor.fetchall()
 

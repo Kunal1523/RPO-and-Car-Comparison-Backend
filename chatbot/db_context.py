@@ -12,15 +12,22 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+import contextlib
+
+@contextlib.contextmanager
 def _get_conn():
-    """Open a fresh psycopg2 connection using env vars."""
-    return psycopg2.connect(
+    """Open a fresh psycopg2 connection and ensure it closes."""
+    conn = psycopg2.connect(
         user=os.getenv("user"),
         password=os.getenv("password"),
         host=os.getenv("host"),
         port=os.getenv("port"),
         dbname=os.getenv("dbname"),
     )
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
