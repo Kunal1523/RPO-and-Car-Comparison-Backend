@@ -1,8 +1,10 @@
 # db_manager.py
 import psycopg2
+from psycopg2 import pool
 from psycopg2 import errors
 import os
 from dotenv import load_dotenv
+import contextlib
 import pdb
 from psycopg2.extras import RealDictCursor
 load_dotenv()
@@ -31,30 +33,60 @@ CATEGORY_REMAP = {
     "Suzuki Connect": "Connected Car Technology"
 }
 
-class DbManager:
-    def __init__(self):
-        self.connect()
+import threading
 
-    def connect(self):
-        self.conn = psycopg2.connect(
+# Global pool shared across all DbManager instances
+_pool = None
+_local = threading.local()
+
+def get_db_pool():
+    global _pool
+    if _pool is None:
+        _pool = pool.ThreadedConnectionPool(
+            1, 10, # min 1, max 10 connections
             user=os.getenv("user"),
             password=os.getenv("password"),
             host=os.getenv("host"),
             port=os.getenv("port"),
             dbname=os.getenv("dbname")
         )
-        self.conn.autocommit = True
-    
-    def get_conn(self):
-        try:
-            # Ping connection
-            with self.conn.cursor() as cur:
-                cur.execute("SELECT 1")
-        except Exception:
-            print("🔄 Reconnecting to database...")
-            self.connect()
+    return _pool
 
-        return self.conn
+class DbManager:
+    def __init__(self):
+        pass
+
+    def get_conn(self):
+        """
+        Returns a connection for the current thread. 
+        Reuses the same connection within the same thread (e.g. one FastAPI request).
+        """
+        if not hasattr(_local, "conn") or _local.conn is None:
+            _local.conn = get_db_pool().getconn()
+            _local.conn.autocommit = True
+        return _local.conn
+    
+    @staticmethod
+    def release_conn():
+        """Releases the connection for the current thread back to the pool."""
+        if hasattr(_local, "conn") and _local.conn is not None:
+            try:
+                get_db_pool().putconn(_local.conn)
+            except Exception:
+                pass
+            _local.conn = None
+
+    @contextlib.contextmanager
+    def connection(self):
+        """Legacy helper for manual context management."""
+        conn = self.get_conn()
+        try:
+            yield conn
+        finally:
+            # We don't release here if we are using thread-local management 
+            # unless we want to be very granular. 
+            # But let's just make it compatible.
+            pass
 
 class BrandDbManager(DbManager):
     def __init__(self):
@@ -602,7 +634,7 @@ class PricingDbManager(DbManager):
         """
         with self.get_conn().cursor() as cursor:
             cursor.execute(query, (new_price, variant_id))
-            self.conn.commit()
+            self.get_conn().commit()
             return cursor.rowcount > 0
 
     def insert_new_price(self, variant_id: int, price: float, p_type: str):
@@ -614,7 +646,7 @@ class PricingDbManager(DbManager):
         """
         with self.get_conn().cursor() as cursor:
             cursor.execute(query, (variant_id, price, p_type))
-            self.conn.commit()
+            self.get_conn().commit()
             return True
     
     def get_price(self, variant_id: str, version: int):
@@ -776,7 +808,7 @@ class FeatureDbManager(DbManager):
                 if cursor.fetchone():
                     inserted_count += 1
 
-        self.conn.commit()
+        self.get_conn().commit()
 
         return {
             "status": "success",
@@ -804,7 +836,7 @@ class FeatureDbManager(DbManager):
         return result
     
     def normalize_feature_master(self):
-        conn = self.conn
+        conn = self.get_conn()
         cur = conn.cursor()
 
         # 1️⃣ CATEGORY NORMALIZATION
@@ -899,7 +931,7 @@ class FeatureDbManager(DbManager):
         
         query += " ORDER BY fm.category, fm.name"
         
-        with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with self.get_conn().cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(query, tuple(params))
             results = cur.fetchall()
             return [dict(row) for row in results]
@@ -1005,7 +1037,7 @@ class FeatureDbManager(DbManager):
                     VALUES (%s, %s, %s, TRUE);
                 """, (variant_id, feature_id, value))
 
-        self.conn.commit()
+        self.get_conn().commit()
 
     
     def create_feature(self, name: str, category: str, is_active: bool = True):
@@ -1022,7 +1054,7 @@ class FeatureDbManager(DbManager):
                 """, (name, category, is_active))
 
                 row = cur.fetchone()
-                self.conn.commit()
+                self.get_conn().commit()
 
                 return {
                     "id": row[0],
@@ -1033,11 +1065,11 @@ class FeatureDbManager(DbManager):
                 }
 
             except errors.UniqueViolation:
-                self.conn.rollback()
+                self.get_conn().rollback()
                 raise Exception("Feature with this name already exists in this category")
 
             except Exception as e:
-                self.conn.rollback()
+                self.get_conn().rollback()
                 raise e
 
     def get_categories(self):
@@ -1358,6 +1390,102 @@ class PlanFeatureDbManager(DbManager):
             "price_delta": float(r[4] or 0),
             "is_deleted": r[5]
         }
+
+class ChatHistoryDbManager(DbManager):
+    def __init__(self):
+        super().__init__()
+        # Ensure is_starred column exists
+        try:
+            with self.get_conn().cursor() as cursor:
+                cursor.execute("ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS is_starred BOOLEAN DEFAULT FALSE;")
+        except Exception as e:
+            print(f"Warning: Could not add is_starred column: {e}")
+
+    def get_or_create_session(self, owner_email: str, session_id: int = None):
+        with self.get_conn().cursor(cursor_factory=RealDictCursor) as cursor:
+            if session_id:
+                cursor.execute(
+                    "SELECT * FROM chat_sessions WHERE id = %s AND owner_email = %s",
+                    (session_id, owner_email)
+                )
+                session = cursor.fetchone()
+                if session:
+                    return dict(session)
+
+            # Create new session
+            import time
+            now = int(time.time())
+            cursor.execute(
+                """
+                INSERT INTO chat_sessions (title, owner_email, created_at, updated_at)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id, title, owner_email, created_at, updated_at
+                """,
+                ("New Chat", owner_email, now, now)
+            )
+            new_session = cursor.fetchone()
+            return dict(new_session)
+
+    def append_message(self, session_id: int, role: str, content: str):
+        import time
+        now = int(time.time())
+        with self.get_conn().cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO chat_messages (session_id, role, content, created_at)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (session_id, role, content, now)
+            )
+            # Update session timestamp
+            cursor.execute(
+                "UPDATE chat_sessions SET updated_at = %s WHERE id = %s",
+                (now, session_id)
+            )
+
+    def get_session_history(self, session_id: int):
+        with self.get_conn().cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                "SELECT role, content FROM chat_messages WHERE session_id = %s ORDER BY created_at ASC",
+                (session_id,)
+            )
+            return [dict(r) for r in cursor.fetchall()]
+
+    def list_user_sessions(self, owner_email: str):
+        with self.get_conn().cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                "SELECT id, title, is_starred, updated_at, created_at FROM chat_sessions WHERE owner_email = %s ORDER BY updated_at DESC",
+                (owner_email,)
+            )
+            return [dict(r) for r in cursor.fetchall()]
+
+    def rename_session(self, session_id: int, owner_email: str, new_title: str):
+        import time
+        now = int(time.time())
+        with self.get_conn().cursor() as cursor:
+            cursor.execute(
+                "UPDATE chat_sessions SET title = %s, updated_at = %s WHERE id = %s AND owner_email = %s",
+                (new_title, now, session_id, owner_email)
+            )
+
+    def toggle_star_session(self, session_id: int, owner_email: str):
+        with self.get_conn().cursor() as cursor:
+            cursor.execute(
+                "UPDATE chat_sessions SET is_starred = NOT COALESCE(is_starred, FALSE) WHERE id = %s AND owner_email = %s RETURNING is_starred",
+                (session_id, owner_email)
+            )
+            result = cursor.fetchone()
+            return result[0] if result else False
+
+    def delete_session(self, session_id: int, owner_email: str):
+        with self.get_conn().cursor() as cursor:
+            # chat_messages will be deleted by ON DELETE CASCADE if set in SQL, 
+            # but let's be explicit if not sure.
+            cursor.execute("DELETE FROM chat_messages WHERE session_id = %s", (session_id,))
+            cursor.execute(
+                "DELETE FROM chat_sessions WHERE id = %s AND owner_email = %s",
+                (session_id, owner_email)
+            )
 
     def soft_delete_feature(self, plan_id: str, plan_feature_id: str):
         query = """
