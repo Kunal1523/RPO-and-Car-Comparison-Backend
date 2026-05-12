@@ -1127,6 +1127,22 @@ class ModelPlanDbManager(DbManager):
             "updated_at": r[5].isoformat()
         }
 
+    def rename_plan(self, plan_id: str, new_name: str):
+        query = """
+            UPDATE model_plans
+            SET name = %s, updated_at = now()
+            WHERE id = %s
+            RETURNING id, name;
+        """
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (new_name, plan_id))
+                r = cur.fetchone()
+                conn.commit()
+        if not r:
+            return None
+        return {"plan_id": str(r[0]), "name": r[1]}
+
     def list_plans(self, base_variant_class: str = None):
         if base_variant_class:
             query = """
@@ -1184,8 +1200,8 @@ class PlanFeatureDbManager(DbManager):
         """
         query = """
             INSERT INTO plan_features
-                (plan_id, feature_id, feature_name, category, value, original_value, is_inherited, cost_delta)
-            VALUES (%s, %s, %s, %s, %s, %s, true, 0);
+                (plan_id, feature_id, feature_name, category, value, original_value, is_inherited, cost_delta, price_delta)
+            VALUES (%s, %s, %s, %s, %s, %s, true, 0, 0);
         """
         with self.get_conn() as conn:
             with conn.cursor() as cur:
@@ -1200,18 +1216,18 @@ class PlanFeatureDbManager(DbManager):
         if include_deleted:
             query = """
                 SELECT id, feature_id, feature_name, category, value, original_value,
-                       is_inherited, is_deleted, cost_delta
+                       is_inherited, is_deleted, cost_delta, price_delta
                 FROM plan_features
                 WHERE plan_id = %s
-                ORDER BY category, feature_name;
+                ORDER BY category, display_order, feature_name;
             """
         else:
             query = """
                 SELECT id, feature_id, feature_name, category, value, original_value,
-                       is_inherited, is_deleted, cost_delta
+                       is_inherited, is_deleted, cost_delta, price_delta
                 FROM plan_features
                 WHERE plan_id = %s AND is_deleted = false
-                ORDER BY category, feature_name;
+                ORDER BY category, display_order, feature_name;
             """
         with self.get_conn().cursor() as cur:
             cur.execute(query, (plan_id,))
@@ -1227,24 +1243,63 @@ class PlanFeatureDbManager(DbManager):
                 "original_value": r[5],
                 "is_inherited": r[6],
                 "is_deleted": r[7],
-                "cost_delta": float(r[8] or 0)
+                "cost_delta": float(r[8] or 0),
+                "price_delta": float(r[9] or 0)
             }
             for r in rows
         ]
 
     def add_custom_feature(self, plan_id: str, feature_name: str, category: str,
-                           value: str = None, cost_delta: float = 0):
-        query = """
-            INSERT INTO plan_features
-                (plan_id, feature_id, feature_name, category, value, original_value, is_inherited, cost_delta)
-            VALUES (%s, NULL, %s, %s, %s, %s, false, %s)
-            RETURNING id, feature_name, category, value, original_value, cost_delta;
-        """
+                           value: str = None, cost_delta: float = 0, price_delta: float = 0,
+                           after_feature: str = None):
         with self.get_conn() as conn:
             with conn.cursor() as cur:
-                cur.execute(query, (plan_id, feature_name, category, value, value, cost_delta))
+                # 1. Determine the new display_order
+                new_order = 0
+                if after_feature:
+                    cur.execute("""
+                        SELECT display_order FROM plan_features 
+                        WHERE plan_id = %s AND category = %s AND feature_name = %s
+                        LIMIT 1
+                    """, (plan_id, category, after_feature))
+                    r_order = cur.fetchone()
+                    if r_order:
+                        new_order = r_order[0] + 1
+                        # Shift existing features
+                        cur.execute("""
+                            UPDATE plan_features 
+                            SET display_order = display_order + 1 
+                            WHERE plan_id = %s AND category = %s AND display_order >= %s
+                        """, (plan_id, category, new_order))
+                else:
+                    # Append to the end
+                    cur.execute("""
+                        SELECT COALESCE(MAX(display_order), 0) FROM plan_features 
+                        WHERE plan_id = %s AND category = %s
+                    """, (plan_id, category))
+                    max_order = cur.fetchone()[0]
+                    new_order = max_order + 1
+
+                # 2. Insert the new feature
+                query = """
+                    INSERT INTO plan_features
+                        (plan_id, feature_id, feature_name, category, value, original_value, is_inherited, cost_delta, price_delta, display_order)
+                    VALUES (%s, NULL, %s, %s, %s, %s, false, %s, %s, %s)
+                    RETURNING id, feature_name, category, value, original_value, cost_delta, price_delta;
+                """
+                cur.execute(query, (plan_id, feature_name, category, value, value, cost_delta, price_delta, new_order))
                 r = cur.fetchone()
+                
+                # 3. Update feature_order table (as requested by user)
+                cur.execute("""
+                    INSERT INTO feature_order (feature_name, category, order_index)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (feature_name, category) 
+                    DO UPDATE SET order_index = EXCLUDED.order_index;
+                """, (feature_name, category, new_order))
+                
                 conn.commit()
+
         return {
             "plan_feature_id": str(r[0]),
             "feature_name": r[1],
@@ -1252,11 +1307,13 @@ class PlanFeatureDbManager(DbManager):
             "value": r[3],
             "original_value": r[4],
             "cost_delta": float(r[5] or 0),
+            "price_delta": float(r[6] or 0),
             "is_inherited": False
         }
 
     def update_feature(self, plan_id: str, plan_feature_id: str,
-                       value: str = None, cost_delta: float = None):
+                       value: str = None, cost_delta: float = None, price_delta: float = None,
+                       is_deleted: bool = None):
         fields = []
         values = []
 
@@ -1266,6 +1323,12 @@ class PlanFeatureDbManager(DbManager):
         if cost_delta is not None:
             fields.append("cost_delta = %s")
             values.append(cost_delta)
+        if price_delta is not None:
+            fields.append("price_delta = %s")
+            values.append(price_delta)
+        if is_deleted is not None:
+            fields.append("is_deleted = %s")
+            values.append(is_deleted)
 
         if not fields:
             return None
@@ -1276,8 +1339,8 @@ class PlanFeatureDbManager(DbManager):
         query = f"""
             UPDATE plan_features
             SET {', '.join(fields)}
-            WHERE plan_id = %s AND id = %s AND is_deleted = false
-            RETURNING id, feature_name, value, cost_delta;
+            WHERE plan_id = %s AND id = %s
+            RETURNING id, feature_name, value, cost_delta, price_delta, is_deleted;
         """
         with self.get_conn() as conn:
             with conn.cursor() as cur:
@@ -1291,7 +1354,9 @@ class PlanFeatureDbManager(DbManager):
             "plan_feature_id": str(r[0]),
             "feature_name": r[1],
             "value": r[2],
-            "cost_delta": float(r[3] or 0)
+            "cost_delta": float(r[3] or 0),
+            "price_delta": float(r[4] or 0),
+            "is_deleted": r[5]
         }
 
     def soft_delete_feature(self, plan_id: str, plan_feature_id: str):

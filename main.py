@@ -690,7 +690,7 @@ def normalize_feature_master():
 @app.post("/admin/normalize-variants-and-pricing")
 def normalize_variants_and_pricing(brand_name: str, car_name: str):
     try:
-        conn = variant_db.conn
+        conn = variant_db.get_conn()
 
         with conn.cursor() as cursor:
 
@@ -1807,7 +1807,7 @@ def compare_mixed(payload: MixedCompareRequest):
             if not plan:
                 continue
 
-            features = plan_feature_db.get_features_by_plan(str(plan_id))
+            features = plan_feature_db.get_features_by_plan(str(plan_id), include_deleted=True)
             plan_name = plan["name"]
 
             # Normalize data structure
@@ -1824,6 +1824,13 @@ def compare_mixed(payload: MixedCompareRequest):
                     "feature_id": f.get("feature_id", str(uuid.uuid4())),
                     "feature_name": f["feature_name"],
                     "category": f["category"],
+                    "value": f.get("value", ""),
+                    "cost_delta": f.get("cost_delta", 0),
+                    "price_delta": f.get("price_delta", 0),
+                    "plan_feature_id": f.get("plan_feature_id"),
+                    "original_value": f.get("original_value"),
+                    "is_inherited": f.get("is_inherited", False),
+                    "is_deleted": f.get("is_deleted", False),
                     "sub_variant_values": {
                         plan_name: f.get("value", "")
                     }
@@ -1831,6 +1838,7 @@ def compare_mixed(payload: MixedCompareRequest):
 
             result.append({
                 "variant_class": plan_name,
+                "base_variant_class": plan.get("base_variant_class", ""),
                 "car_id": plan.get("car_id", ""),
                 "sub_variants": sub_variant_meta,
                 "features": merged_features
@@ -2126,7 +2134,7 @@ def get_brands_and_cars():
             ORDER BY b.name, c.name
         """
         
-        with variant_db.conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with variant_db.get_conn().cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(query)
             results = cur.fetchall()
         
@@ -2244,7 +2252,7 @@ def get_variants_by_car(car_id: str):
             ORDER BY v.name, p.ex_showroom_price NULLS LAST
         """
 
-        with variant_db.conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with variant_db.get_conn().cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(query, (car_id,))
             rows = cur.fetchall()
 
@@ -2629,12 +2637,16 @@ class CreatePlanRequest(BaseModel):
 class UpdatePlanFeatureRequest(BaseModel):
     value: Optional[str] = None
     cost_delta: Optional[float] = None
+    price_delta: Optional[float] = None
+    is_deleted: Optional[bool] = None
 
 class AddPlanFeatureRequest(BaseModel):
     feature_name: str
     category: str
     value: Optional[str] = None
     cost_delta: float = 0
+    price_delta: float = 0
+    after_feature: Optional[str] = None
     
 
 
@@ -2685,6 +2697,19 @@ def list_model_plans(base_variant_class: Optional[str] = None):
     try:
         return {"success": True, "data": plan_db.list_plans(base_variant_class)}
     except Exception as e:
+        raise HTTPException(500, str(e))
+class RenamePlanRequest(BaseModel):
+    name: str
+
+@app.put("/api/model-plans/{plan_id}/rename")
+def rename_model_plan(plan_id: UUID, payload: RenamePlanRequest):
+    try:
+        updated = plan_db.rename_plan(str(plan_id), payload.name)
+        if not updated:
+            raise HTTPException(404, "Plan not found")
+        return {"success": True, "data": updated}
+    except Exception as e:
+        import traceback; traceback.print_exc()
         raise HTTPException(500, str(e))
 
 
@@ -2745,7 +2770,9 @@ def update_plan_feature(plan_id: UUID, plan_feature_id: UUID, payload: UpdatePla
             plan_id=str(plan_id),
             plan_feature_id=str(plan_feature_id),
             value=payload.value,
-            cost_delta=payload.cost_delta
+            cost_delta=payload.cost_delta,
+            price_delta=payload.price_delta,
+            is_deleted=payload.is_deleted
         )
         if not result:
             raise HTTPException(404, "Feature not found in this plan")
@@ -2767,7 +2794,9 @@ def add_plan_feature(plan_id: UUID, payload: AddPlanFeatureRequest):
             feature_name=payload.feature_name,
             category=payload.category,
             value=payload.value,
-            cost_delta=payload.cost_delta
+            cost_delta=payload.cost_delta,
+            price_delta=payload.price_delta,
+            after_feature=payload.after_feature
         )
         return {"success": True, "data": result}
     except HTTPException:
