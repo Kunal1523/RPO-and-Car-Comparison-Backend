@@ -144,15 +144,15 @@ app = FastAPI(title="Car Compare API")
 
 # ── Middleware ─────────────────────────────────────────────────────────────
 
-@app.middleware("http")
-async def db_session_middleware(request: Request, call_next):
-    try:
-        response = await call_next(request)
-        return response
-    finally:
-        # Release psycopg2 connections back to their pools
-        ChatDbManager.release_conn()
-        UserDbManager.release_conn()
+# @app.middleware("http")
+# async def db_session_middleware(request: Request, call_next):
+#     try:
+#         response = await call_next(request)
+#         return response
+#     finally:
+#         # Release psycopg2 connections back to their pools
+#         ChatDbManager.release_conn()
+#         UserDbManager.release_conn()
 
 app.add_middleware(
     CORSMiddleware,
@@ -2137,9 +2137,10 @@ def get_brands_and_cars():
             ORDER BY b.name, c.name
         """
         
-        with variant_db.get_conn().cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(query)
-            results = cur.fetchall()
+        with variant_db.get_conn() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(query)
+                results = cur.fetchall()
         
         # Group by brand
         brands_map = {}
@@ -2255,9 +2256,10 @@ def get_variants_by_car(car_id: str):
             ORDER BY v.name, p.ex_showroom_price NULLS LAST
         """
 
-        with variant_db.get_conn().cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(query, (car_id,))
-            rows = cur.fetchall()
+        with variant_db.get_conn() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(query, (car_id,))
+                rows = cur.fetchall()
 
         if not rows:
             raise HTTPException(status_code=404, detail="Car not found")
@@ -2488,9 +2490,10 @@ def get_pricing_by_ids(brand_id: int, car_id: int):
         ORDER BY p.ex_showroom_price DESC;
         """
         
-        with pricing_db.get_conn().cursor() as cursor:
-            cursor.execute(query, (brand_id, car_id))
-            rows = cursor.fetchall()
+        with variant_db.get_conn() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(query, (brand_id, car_id))
+                rows = cur.fetchall()
 
         if not rows:
             return {
@@ -2723,8 +2726,8 @@ def get_model_plan(plan_id: UUID, version: int = 1):
         if not plan:
             raise HTTPException(404, "Plan not found")
             
-        # Get plan features
-        features = plan_feature_db.get_features_by_plan(str(plan_id))
+        # Get plan features - Explicitly include deleted features so UI can highlight them in red
+        features = plan_feature_db.get_features_by_plan(str(plan_id), include_deleted=True)
         
         # Fetch original sub-variant values for options
         sub_variants = variant_db.get_variants_by_class_name_only(plan["base_variant_class"])

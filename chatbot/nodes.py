@@ -67,14 +67,9 @@ def summarize_chat_title(question: str) -> str:
 
 
 def _get_db_conn():
-    """Open a fresh psycopg2 connection from env vars."""
-    return psycopg2.connect(
-        user=os.getenv("user"),
-        password=os.getenv("password"),
-        host=os.getenv("host"),
-        port=os.getenv("port"),
-        dbname=os.getenv("dbname"),
-    )
+    """Get a connection from the global pool."""
+    from DBManager import get_db_pool
+    return get_db_pool().getconn()
 
 
 def _build_history_text(history: list[dict], max_turns: int = 5) -> str:
@@ -309,7 +304,8 @@ def execute_sql(state: ChatState) -> dict:
     finally:
         if conn:
             try:
-                conn.close()
+                from DBManager import get_db_pool
+                get_db_pool().putconn(conn)
             except Exception:
                 pass
 

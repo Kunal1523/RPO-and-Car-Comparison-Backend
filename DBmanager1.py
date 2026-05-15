@@ -44,7 +44,10 @@ class DbManager:
 
     @contextlib.contextmanager
     def get_conn(self):
-        yield self.get_conn_internal()
+        try:
+            yield self.get_conn_internal()
+        finally:
+            self.release_conn()
 
 class UserDBHandler(DbManager):
 
