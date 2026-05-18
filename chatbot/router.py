@@ -124,10 +124,10 @@ def send_message(
 
     # ── Release DB connection before long AI task ─────────────────────────────
     # This prevents "Pool Exhausted" errors while waiting for Gemini
-    from DBManager import DbManager as ChatDbManager
-    from DBmanager1 import DbManager as UserDbManager
-    ChatDbManager.release_conn()
-    UserDbManager.release_conn()
+    # from DBManager import DbManager as ChatDbManager
+    # from DBmanager1 import DbManager as UserDbManager
+    # ChatDbManager.release_conn()
+    # UserDbManager.release_conn()
 
     # ── Run the LangGraph ────────────────────────────────────────────────────
     try:
