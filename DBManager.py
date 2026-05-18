@@ -2274,6 +2274,23 @@ class ModelPlanDbManager(DbManager):
     def __init__(self):
         super().__init__()
 
+    def get_plan_by_name_and_class(self, name: str, base_variant_class: str):
+        query = """
+            SELECT id, name, base_variant_class, base_car_id, created_at
+            FROM model_plans
+            WHERE name = %s AND base_variant_class = %s LIMIT 1;
+        """
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (name, base_variant_class))
+                r = cur.fetchone()
+        if not r:
+            return None
+        return {
+            "plan_id": str(r[0]), "name": r[1], "base_variant_class": r[2],
+            "base_car_id": str(r[3]), "created_at": r[4].isoformat()
+        }
+
     def create_plan(self, name: str, base_variant_class: str, base_car_id: str):
         query = """
             INSERT INTO model_plans (name, base_variant_class, base_car_id)

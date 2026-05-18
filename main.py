@@ -2680,6 +2680,11 @@ def create_model_plan(payload: CreatePlanRequest):
                         "value": f.get("value")
                     }
 
+        # Prevent duplicate plan creation with same name & variant class
+        existing = plan_db.get_plan_by_name_and_class(payload.name, payload.base_variant_class)
+        if existing:
+            return {"success": True, "data": {**existing, "features_copied": 0}}
+
         plan = plan_db.create_plan(
             name=payload.name,
             base_variant_class=payload.base_variant_class,
@@ -2704,6 +2709,7 @@ def list_model_plans(base_variant_class: Optional[str] = None):
         return {"success": True, "data": plan_db.list_plans(base_variant_class)}
     except Exception as e:
         raise HTTPException(500, str(e))
+
 class RenamePlanRequest(BaseModel):
     name: str
 
