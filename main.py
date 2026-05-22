@@ -676,6 +676,36 @@ def get_feature_master_category_wise():
         return feature_db.get_feature_master_category_wise()
     except Exception as e:
         return {"error": str(e)}
+
+class FeatureRenameRequest(BaseModel):
+    new_name: str
+
+class FeatureMoveRequest(BaseModel):
+    new_category: str
+
+@app.patch("/features/master/{feature_id}/rename")
+def rename_feature(feature_id: str, request: FeatureRenameRequest):
+    try:
+        result = feature_db.rename_feature(feature_id, request.new_name)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.patch("/features/master/{feature_id}/move")
+def move_feature_category(feature_id: str, request: FeatureMoveRequest):
+    try:
+        result = feature_db.move_feature_category(feature_id, request.new_category)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.delete("/features/master/{feature_id}")
+def delete_feature(feature_id: str):
+    try:
+        result = feature_db.deactivate_feature(feature_id)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
     
 
 @app.post("/features/master/normalize")

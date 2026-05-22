@@ -2081,17 +2081,20 @@ class FeatureDbManager(DbManager):
         return {"status": "success", "inserted_count": inserted_count}
 
     def get_feature_master_category_wise(self):
-        query = "SELECT name, category FROM features_master ORDER BY category, name;"
+        query = "SELECT id, name, category FROM features_master WHERE is_active = true ORDER BY category, name;"
         with self.get_conn() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(query)
                 rows = cursor.fetchall()
 
         result = {}
-        for name, category in rows:
+        for feature_id, name, category in rows:
             if category not in result:
                 result[category] = []
-            result[category].append({"name": name})
+            result[category].append({
+                "id": str(feature_id),
+                "name": name
+            })
         return result
 
     def normalize_feature_master(self):
@@ -2264,6 +2267,97 @@ class FeatureDbManager(DbManager):
                 cur.execute(query, (value, variant_id, feature_id, version))
                 return cur.rowcount > 0
             # autocommit=True handles the commit
+
+    def rename_feature(self, feature_id: str, new_name: str):
+        with self.get_conn() as conn:
+            conn.autocommit = False
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT name, category FROM features_master WHERE id = %s",
+                        (feature_id,)
+                    )
+                    row = cur.fetchone()
+                    if not row:
+                        raise Exception("Feature not found")
+                    old_name, category = row
+
+                    if old_name == new_name:
+                        return {"status": "success", "message": "No change"}
+
+                    cur.execute(
+                        "SELECT id FROM features_master WHERE name = %s AND category = %s AND is_active = true",
+                        (new_name, category)
+                    )
+                    if cur.fetchone():
+                        raise Exception("A feature with this name already exists in this category")
+
+                    cur.execute(
+                        "UPDATE features_master SET name = %s WHERE id = %s",
+                        (new_name, feature_id)
+                    )
+
+                    cur.execute(
+                        "UPDATE plan_features SET feature_name = %s WHERE feature_id = %s",
+                        (new_name, feature_id)
+                    )
+
+                conn.commit()
+                return {"status": "success", "message": "Feature renamed successfully"}
+            except Exception:
+                conn.rollback()
+                raise
+
+    def move_feature_category(self, feature_id: str, new_category: str):
+        with self.get_conn() as conn:
+            conn.autocommit = False
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT name, category FROM features_master WHERE id = %s",
+                        (feature_id,)
+                    )
+                    row = cur.fetchone()
+                    if not row:
+                        raise Exception("Feature not found")
+                    name, old_category = row
+
+                    if old_category == new_category:
+                        return {"status": "success", "message": "No change"}
+
+                    cur.execute(
+                        "SELECT id FROM features_master WHERE name = %s AND category = %s AND is_active = true",
+                        (name, new_category)
+                    )
+                    if cur.fetchone():
+                        raise Exception("A feature with this name already exists in the target category")
+
+                    cur.execute(
+                        "UPDATE features_master SET category = %s WHERE id = %s",
+                        (new_category, feature_id)
+                    )
+
+                    cur.execute(
+                        "UPDATE plan_features SET category = %s WHERE feature_id = %s",
+                        (new_category, feature_id)
+                    )
+
+                conn.commit()
+                return {"status": "success", "message": "Feature moved successfully"}
+            except Exception:
+                conn.rollback()
+                raise
+
+    def deactivate_feature(self, feature_id: str):
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE features_master SET is_active = false WHERE id = %s",
+                    (feature_id,)
+                )
+                if cur.rowcount == 0:
+                    raise Exception("Feature not found")
+        return {"status": "success", "message": "Feature deactivated successfully"}
 
 
 # ---------------------------------------------------------------------------
