@@ -12,17 +12,8 @@ class Settings:
         self.DATABASE_URL = os.getenv("DATABASE_URL")
         self.ALLOWED_USERS = os.getenv("ALLOWED_USERS")
 
-        missing = []
         if not self.DATABASE_URL:
-            missing.append("DATABASE_URL")
-        # if not self.ALLOWED_USERS:
-        #     missing.append("ALLOWED_USERS")
-
-        if missing:
-            raise RuntimeError(
-                f"Missing required environment variables: {', '.join(missing)}. "
-                f"Check your .env file."
-            )
+            print("[config] WARNING: DATABASE_URL is not set — database features will be unavailable.")
 
 
 @lru_cache()

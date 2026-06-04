@@ -51,27 +51,31 @@ DATABASE_URL = settings.DATABASE_URL
  
 # Supabase Connect Args
 connect_args = {}
- 
 
-if "sqlite" in DATABASE_URL:
+_DB_AVAILABLE = bool(DATABASE_URL)
+
+if not _DB_AVAILABLE:
+    print("[database] WARNING: DATABASE_URL not set — using in-memory SQLite fallback. All DB routes will be unavailable.")
+    DATABASE_URL = "sqlite:///:memory:"
     connect_args = {"check_same_thread": False}
- 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args=connect_args,
+elif "sqlite" in DATABASE_URL:
+    connect_args = {"check_same_thread": False}
 
-    # Connection health checks
-    pool_pre_ping=True,
-    pool_recycle=1800,
-
-    # IMPORTANT FIXES
-    pool_size=5,         # max permanent connections
-    max_overflow=2,      # temporary extra connections
-    pool_timeout=30,     # wait time before timeout
-
-    # optional
-    echo=False
-)
+try:
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args=connect_args,
+        pool_pre_ping=True,
+        pool_recycle=1800,
+        pool_size=5,
+        max_overflow=2,
+        pool_timeout=30,
+        echo=False
+    )
+except Exception as e:
+    print(f"[database] WARNING: Engine creation failed ({e}) — falling back to in-memory SQLite.")
+    _DB_AVAILABLE = False
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
 
 SessionLocal = sessionmaker(
     autocommit=False,

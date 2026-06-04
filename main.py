@@ -108,8 +108,11 @@ def ensure_schema(engine):
     print("[DB] Done.")
 
 
-# Run schema check at import/startup time
-ensure_schema(engine)
+# Run schema check at import/startup time (skipped gracefully if DB is unavailable)
+try:
+    ensure_schema(engine)
+except Exception as _schema_err:
+    print(f"[main] WARNING: ensure_schema skipped \u2014 {_schema_err}")
 
 def get_loggers():
     LOG_DIR = os.path.abspath("logs")
