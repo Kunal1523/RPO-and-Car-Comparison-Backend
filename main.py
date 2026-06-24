@@ -2,7 +2,7 @@ import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
-from DBManager import BrandDbManager, CarDbManager, VariantDbManager,PricingDbManager, FeatureDbManager,ModelPlanDbManager, PlanFeatureDbManager
+from DBManager import BrandDbManager, CarDbManager, VariantDbManager,PricingDbManager, FeatureDbManager,ModelPlanDbManager, PlanFeatureDbManager, MasterDropdownDbManager, NewModelDbManager, SidebarDbManager
 from fastapi import UploadFile, File
 import openpyxl
 import pdb
@@ -32,6 +32,7 @@ from fastapi.responses import RedirectResponse, JSONResponse
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 import httpx
+from routers.stackup import router as stackup_router
 
 SERPAPI_KEY = os.getenv("SERPAPI_KEY")
 userdbhandler = UserDBHandler()
@@ -167,6 +168,7 @@ app.add_middleware(
 
 # ── Chatbot Module ──────────────────────────────────────
 app.include_router(chatbot_router)
+app.include_router(stackup_router)
 # ────────────────────────────────────────────────────────
 
 brand_db = BrandDbManager()
@@ -250,7 +252,10 @@ class FeedbackRequest(BaseModel):
     project_type: str
     timestamp: datetime
 
-
+class CarBodyTypeRequest(BaseModel):
+    brand_name: str
+    car_name: str
+    body_type: str
 
 
 def write_audit(db: Session, owner_email: str, action: str, details: dict):
@@ -390,6 +395,53 @@ def create_car(payload: CarCreateRequest):
 
         result = car_db.insert_car(brand_id, payload.car_name)
         return {"success": True, "data": result}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/cars/body-type")
+def unassign_car_body_type(brand_name: str, car_name: str):
+    brand_id = brand_db.get_brand_id_by_name(brand_name)
+    if not brand_id:
+        raise HTTPException(status_code=404, detail=f"Brand '{brand_name}' not found")
+
+    result = car_db.clear_body_type(brand_id, car_name)
+    if not result:
+        raise HTTPException(status_code=404, detail="Car not found")
+
+    return {"success": True}
+
+
+@app.put("/cars/body-type")
+def update_car_body_type(payload: CarBodyTypeRequest):
+    try:
+        brand_id = brand_db.get_brand_id_by_name(payload.brand_name)
+
+        if not brand_id:
+            raise HTTPException(
+                status_code=404,
+                detail="Brand not found."
+            )
+
+        result = car_db.update_body_type(
+            brand_id=brand_id,
+            car_name=payload.car_name,
+            body_type=payload.body_type
+        )
+
+        if not result:
+            raise HTTPException(
+                status_code=404,
+                detail="Car not found."
+            )
+
+        return {
+            "success": True,
+            "message": "Body type updated successfully",
+            "data": result
+        }
 
     except HTTPException:
         raise
@@ -683,6 +735,15 @@ def get_feature_master_category_wise():
 class FeatureRenameRequest(BaseModel):
     new_name: str
 
+class FeatureAddRequest(BaseModel):
+    name: str
+    category: str
+
+class FeatureMergeRequest(BaseModel):
+    feature_ids: List[str]
+    target_name: str
+    target_category: str
+
 class FeatureMoveRequest(BaseModel):
     new_category: str
 
@@ -698,6 +759,32 @@ def rename_feature(feature_id: str, request: FeatureRenameRequest):
 def move_feature_category(feature_id: str, request: FeatureMoveRequest):
     try:
         result = feature_db.move_feature_category(feature_id, request.new_category)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/features/master")
+def add_feature_master(request: FeatureAddRequest):
+    try:
+        result = feature_db.add_feature_master(request.name, request.category)
+        if not result:
+            raise HTTPException(status_code=400, detail="Feature already exists or failed to create")
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/features/master/merge")
+def merge_features(request: FeatureMergeRequest):
+    try:
+        result = feature_db.merge_features(request.feature_ids, request.target_name, request.target_category)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/features/master/{feature_id}/unmerge")
+def unmerge_features(feature_id: str):
+    try:
+        result = feature_db.unmerge_features(feature_id)
         return result
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -720,6 +807,19 @@ def normalize_feature_master():
             "message": "Feature master normalized successfully",
             "data": result
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class FeatureReorderItem(BaseModel):
+    id: str
+    sort_order: int
+
+@app.patch("/features/master/reorder")
+def reorder_features(updates: List[FeatureReorderItem]):
+    """Bulk update sort_order for features to persist drag-and-drop ordering."""
+    try:
+        result = feature_db.reorder_features([u.dict() for u in updates])
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1648,6 +1748,85 @@ def compare_variants(payload: VariantCompareRequest):
         traceback.print_exc()
         raise HTTPException(500, str(e))
 
+@app.get("/api/variant-class/{variant_class}")
+def get_variant_class_details(variant_class: str, version: int = 1):
+    try:
+        sub_variants = variant_db.get_variants_by_class_name_only(variant_class=variant_class)
+        if not sub_variants:
+            raise HTTPException(404, f"No variants found for class '{variant_class}'")
+
+        car_id = sub_variants[0]["car_id"]
+        sub_variant_meta = []
+        features_per_sv = {}
+
+        for sv in sub_variants:
+            prices = pricing_db.get_all_prices(variant_id=sv["id"], version=version)
+            prices_list = []
+            for p in prices:
+                if p.get("ex_showroom_price"):
+                    prices_list.append({
+                        "currency": p.get("currency", "INR"),
+                        "ex_showroom_price": float(p["ex_showroom_price"]),
+                        "fuel_type": p.get("fuel_type"),
+                        "engine_type": p.get("engine_type"),
+                        "transmission_type": p.get("transmission_type"),
+                        "paint_type": p.get("paint_type"),
+                        "edition": p.get("edition")
+                    })
+            sub_variant_meta.append({
+                "variant_id": sv["id"],
+                "variant_name": sv["name"],
+                "pricing": prices_list
+            })
+
+            features = feature_db.get_variant_features(variant_id=sv["id"], version=version)
+            features_per_sv[sv["name"]] = {f["feature_id"]: f for f in features}
+
+        all_feature_ids = {}
+        for sv_features in features_per_sv.values():
+            for fid, f in sv_features.items():
+                if fid not in all_feature_ids:
+                    all_feature_ids[fid] = {"feature_name": f["feature_name"], "category": f["category"]}
+
+        # Pad with all master features
+        master_features = feature_db.get_all_master_features_flat()
+        for mf in master_features:
+            if mf["feature_id"] not in all_feature_ids:
+                all_feature_ids[mf["feature_id"]] = {
+                    "feature_name": mf["feature_name"],
+                    "category": mf["category"]
+                }
+
+        merged_features = []
+        for feature_id, meta in all_feature_ids.items():
+            values = {}
+            for sv in sub_variants:
+                sv_feats = features_per_sv[sv["name"]]
+                values[sv["name"]] = sv_feats[feature_id].get("value", "") if feature_id in sv_feats else ""
+            merged_features.append({
+                "feature_id": feature_id,
+                "feature_name": meta["feature_name"],
+                "category": meta["category"],
+                "sub_variant_values": {sv["name"]: values[sv["name"]] for sv in sub_variants}
+            })
+
+        return {
+            "success": True,
+            "data": {
+                "variant_class": variant_class,
+                "car_id": car_id,
+                "sub_variants": sub_variant_meta,
+                "features": merged_features
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, str(e))
+
 @app.post("/api/compare/classes")
 def compare_variant_classes(payload: ClassCompareRequest):
     try:
@@ -1762,7 +1941,8 @@ class MixedCompareRequest(BaseModel):
     variant_classes: list[str] = []
     plan_ids: list[str] = []
     version: int = 1
-
+    price_min_lakhs: float | None = None
+    price_max_lakhs: float | None = None
 
 @app.post("/api/compare/mixed")
 def compare_mixed(payload: MixedCompareRequest):
@@ -1771,6 +1951,12 @@ def compare_mixed(payload: MixedCompareRequest):
             raise HTTPException(400, "At least 2 items required to compare")
 
         result = []
+
+        # These two dicts are what the frontend needs
+        # nm_variant_ids  -> { column_name: { nm_variant_id, feature_values } }
+        # variant_meta    -> { column_name: { car_id, variant_class, version } }
+        nm_variant_ids = {}
+        variant_meta = {}
 
         # 1. Process standard variant classes
         for class_name in payload.variant_classes:
@@ -1787,15 +1973,27 @@ def compare_mixed(payload: MixedCompareRequest):
                 prices_list = []
                 for p in prices:
                     if p.get("ex_showroom_price"):
+                        price_val = float(p["ex_showroom_price"])
+                        # Apply price filter if provided (filter is in Lakhs, DB is in Rupees)
+                        if payload.price_min_lakhs is not None and payload.price_max_lakhs is not None:
+                            price_in_lakhs = price_val / 100000
+                            if price_in_lakhs < payload.price_min_lakhs or price_in_lakhs > payload.price_max_lakhs:
+                                continue  # skip this price entry - outside filter range
                         prices_list.append({
                             "currency": p.get("currency", "INR"),
-                            "ex_showroom_price": float(p["ex_showroom_price"]),
+                            "ex_showroom_price": price_val,
                             "fuel_type": p.get("fuel_type"),
                             "engine_type": p.get("engine_type"),
                             "transmission_type": p.get("transmission_type"),
                             "paint_type": p.get("paint_type"),
                             "edition": p.get("edition")
                         })
+
+                # If price filter is active and this sub-variant has NO prices in range, skip it entirely
+                if payload.price_min_lakhs is not None and payload.price_max_lakhs is not None:
+                    if not prices_list:
+                        continue  # skip sub-variant - all its prices are out of range
+
                 sub_variant_meta.append({
                     "variant_id": sv["id"],
                     "variant_name": sv["name"],
@@ -1814,19 +2012,31 @@ def compare_mixed(payload: MixedCompareRequest):
                             "category": f["category"]
                         }
 
+            # Pad with all master features
+            master_features = feature_db.get_all_master_features_flat()
+            for mf in master_features:
+                if mf["feature_id"] not in all_feature_ids:
+                    all_feature_ids[mf["feature_id"]] = {
+                        "feature_name": mf["feature_name"],
+                        "category": mf["category"]
+                    }
+
+            # Only iterate over sub-variants that passed price filter (exist in features_per_sv)
+            accepted_sv_names = list(features_per_sv.keys())
+
             merged_features = []
             for feature_id, meta in all_feature_ids.items():
                 values = {}
-                for sv in sub_variants:
-                    sv_feats = features_per_sv[sv["name"]]
-                    values[sv["name"]] = sv_feats[feature_id].get("value", "") if feature_id in sv_feats else ""
-                
+                for sv_name in accepted_sv_names:
+                    sv_feats = features_per_sv[sv_name]
+                    values[sv_name] = sv_feats[feature_id].get("value", "") if feature_id in sv_feats else ""
+
                 merged_features.append({
                     "feature_id": feature_id,
                     "feature_name": meta["feature_name"],
                     "category": meta["category"],
                     "sub_variant_values": {
-                        sv["name"]: values[sv["name"]] for sv in sub_variants
+                        sv_name: values[sv_name] for sv_name in accepted_sv_names
                     }
                 })
 
@@ -1837,153 +2047,118 @@ def compare_mixed(payload: MixedCompareRequest):
                 "features": merged_features
             })
 
-        # 2. Process custom planned models
-        for plan_id in payload.plan_ids:
-            plan = plan_db.get_plan_by_id(str(plan_id))
-            if not plan:
-                continue
+            # ── variant_meta: frontend needs this to know car_id + class for copy-paste ──
+            variant_meta[class_name] = {
+                "car_id": str(car_id),
+                "variant_class": class_name,
+                "version": payload.version
+            }
 
-            features = plan_feature_db.get_features_by_plan(str(plan_id), include_deleted=True)
-            plan_name = plan["name"]
+        # 2. Process New Models
+        with new_model_db.get_conn() as conn:
+            with conn.cursor() as cur:
+                for plan_id in payload.plan_ids:
+                    query = """
+                        SELECT m.name as model_name, v.variant_name, v.engine_type, v.powertrain_type, v.fuel_type, v.price
+                        FROM new_model_variants v
+                        JOIN new_models m ON v.new_model_id = m.id
+                        WHERE v.id = %s
+                    """
+                    cur.execute(query, (plan_id,))
+                    row = cur.fetchone()
+                    if not row:
+                        continue 
+                    # import pdb
+                    # pdb.set_trace()
+                    print(f"row: {row}")
 
-            # Normalize data structure
-            sub_variant_meta = [{
-                "variant_id": str(plan_id),
-                "variant_name": plan_name,
-                "pricing": []
-            }]
+                    model_name = row[0]
+                    variant_name = row[1]
+                    engine_type = row[2]
+                    powertrain_type = row[3]
+                    fuel_type = row[4]
+                    price = float(row[5]) if row[5] else 0.0
 
-            import uuid
-            merged_features = []
-            for f in features:
-                merged_features.append({
-                    "feature_id": f.get("feature_id", str(uuid.uuid4())),
-                    "feature_name": f["feature_name"],
-                    "category": f["category"],
-                    "value": f.get("value", ""),
-                    "cost_delta": f.get("cost_delta", 0),
-                    "price_delta": f.get("price_delta", 0),
-                    "plan_feature_id": f.get("plan_feature_id"),
-                    "original_value": f.get("original_value"),
-                    "is_inherited": f.get("is_inherited", False),
-                    "is_deleted": f.get("is_deleted", False),
-                    "sub_variant_values": {
-                        plan_name: f.get("value", "")
-                    }
-                })
-
-            result.append({
-                "variant_class": plan_name,
-                "base_variant_class": plan.get("base_variant_class", ""),
-                "car_id": plan.get("car_id", ""),
-                "sub_variants": sub_variant_meta,
-                "features": merged_features
-            })
-
-        return {
-            "success": True,
-            "data": result
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(500, str(e))
-
-
-class ClassDetailRequest(BaseModel):
-    variant_class: str  # "Alpha"
-    version: int = 1
-
-
-@app.get("/api/variant-class/{variant_class}")
-def get_variant_class_details(variant_class: str, version: int = 1):
-    try:
-        # Step 1: Get all sub-variants under this class
-        sub_variants = variant_db.get_variants_by_class_name_only(
-            variant_class=variant_class
-        )
-
-        if not sub_variants:
-            raise HTTPException(404, f"No variants found for class '{variant_class}'")
-
-        car_id = sub_variants[0]["car_id"]
-
-        # Step 2: Collect pricing + raw features per sub-variant
-        sub_variant_meta = []
-        features_per_sv = {}
-
-        for sv in sub_variants:
-
-            # Pricing
-            prices = pricing_db.get_all_prices(
-                variant_id=sv["id"],
-                version=version
-            )
-            prices_list = []
-            for p in prices:
-                if p.get("ex_showroom_price"):
-                    prices_list.append({
-                        "currency": p.get("currency", "INR"),
-                        "ex_showroom_price": float(p["ex_showroom_price"]),
-                        "fuel_type": p.get("fuel_type"),
-                        "engine_type": p.get("engine_type"),
-                        "transmission_type": p.get("transmission_type"),
-                        "paint_type": p.get("paint_type"),
-                        "edition": p.get("edition")
+                    pricing_list = []
+                    # if price > 0:
+                    pricing_list.append({
+                        "currency": "INR",
+                        "ex_showroom_price": price,
+                        "fuel_type": fuel_type,
+                        "engine_type": engine_type,
+                        "transmission_type": powertrain_type,
+                        "paint_type": "",
+                        "edition": ""
                     })
 
-            sub_variant_meta.append({
-                "variant_id": sv["id"],
-                "variant_name": sv["name"],
-                "pricing": prices_list
-            })
+                    sub_variant_meta = [{
+                        "variant_id": str(plan_id),
+                        "variant_name": variant_name,
+                        "pricing": pricing_list
+                    }]
 
-            # Raw features keyed by sv name
-            features = feature_db.get_variant_features(
-                variant_id=sv["id"],
-                version=version
-            )
-            features_per_sv[sv["name"]] = {
-                f["feature_id"]: f for f in features
-            }
+                    # Fetch copied features for this NM variant
+                    nm_features_rows = new_model_db.get_nm_variant_features(str(plan_id))
+                    nm_merged_features = []
 
-        # Step 3: Merge features across all sub-variants
-        all_feature_ids = {}
-        for sv_features in features_per_sv.values():
-            for fid, f in sv_features.items():
-                if fid not in all_feature_ids:
-                    all_feature_ids[fid] = {
-                        "feature_name": f["feature_name"],
-                        "category": f["category"]
+                    # ── Build feature_values map for nm_variant_ids ──────────────
+                    feature_values_map = {}
+
+                    for nf in nm_features_rows:
+                        sub_variant_values = nf.get("sub_variant_values") or {}
+                        if not sub_variant_values:
+                            sub_variant_values = {variant_name: nf.get("feature_value", "")}
+
+                        nm_merged_features.append({
+                            "feature_id": nf["feature_id"],
+                            "feature_name": nf["feature_name"],
+                            "category": nf["category"],
+                            "sub_variant_values": sub_variant_values,
+                            "value": nf.get("feature_value", ""),
+                            "cost_delta": nf.get("cost_delta", 0),
+                            "is_edited": bool(
+                                nf.get("feature_value") and
+                                nf.get("original_copied_value") is not None and
+                                nf.get("feature_value") != nf.get("original_copied_value")
+                            ),
+                            "copied_from": nf.get("copied_from_variant_class")
+                        })
+
+                        # Populate feature_values for this NM variant
+                        feature_values_map[nf["feature_id"]] = {
+                            "value": nf.get("feature_value", ""),
+                            "cost_delta": nf.get("cost_delta", 0),
+                            "is_edited": bool(
+                                nf.get("feature_value") and
+                                nf.get("original_copied_value") is not None and
+                                nf.get("feature_value") != nf.get("original_copied_value")
+                            ),
+                            "copied_from": nf.get("copied_from_variant_class")
+                        }
+
+                    # Column name used in data.columns for this NM variant
+                    column_name = f"{model_name} {variant_name}"
+
+                    result.append({
+                        "variant_class": column_name,
+                        "base_variant_class": "",
+                        "car_id": str(plan_id),
+                        "sub_variants": sub_variant_meta,
+                        "features": nm_merged_features,
+                        "plan_id": str(plan_id)
+                    })
+
+                    # ── nm_variant_ids: frontend uses this to detect NM columns ──
+                    nm_variant_ids[column_name] = {
+                        "nm_variant_id": str(plan_id),
+                        "feature_values": feature_values_map
                     }
-
-        merged_features = []
-        for feature_id, meta in all_feature_ids.items():
-            values = {}
-            for sv in sub_variants:
-                sv_feats = features_per_sv[sv["name"]]
-                values[sv["name"]] = sv_feats[feature_id].get("value", "") if feature_id in sv_feats else ""
-
-            merged_features.append({
-                "feature_id": feature_id,
-                "feature_name": meta["feature_name"],
-                "category": meta["category"],
-                "sub_variant_values": {
-                    sv["name"]: values[sv["name"]] for sv in sub_variants
-                }
-            })
 
         return {
             "success": True,
-            "data": {
-                "variant_class": variant_class,
-                "car_id": car_id,
-                "sub_variants": sub_variant_meta,
-                "features": merged_features
-            }
+            "data": result,
+            "nm_variant_ids": nm_variant_ids,   # <-- NEW: NM column detection + editable features
+            "variant_meta": variant_meta,        # <-- NEW: source column car_id for copy-paste
         }
 
     except HTTPException:
@@ -2164,7 +2339,8 @@ def get_brands_and_cars():
                 b.id as brand_id,
                 b.name as brand_name,
                 c.id as car_id,
-                c.name as car_name
+                c.name as car_name,
+                c.body_type as body_type
             FROM brands b
             LEFT JOIN cars c ON b.id = c.brand_id
             ORDER BY b.name, c.name
@@ -2190,7 +2366,8 @@ def get_brands_and_cars():
             if row["car_id"]:
                 brands_map[brand_id]["cars"].append({
                     "car_id": row["car_id"],
-                    "car_name": row["car_name"]
+                    "car_name": row["car_name"],
+                    "body_type": row["body_type"]
                 })
         
         return {
@@ -2202,6 +2379,99 @@ def get_brands_and_cars():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============== MASTER API: Update Car Body Type ==============
+
+class BodyTypeUpdateRequest(BaseModel):
+    brand_name: str
+    car_name: str
+    body_type: str
+    sub_body_type: Optional[str] = None
+
+@app.put("/api/cars/body-type")
+def update_car_body_type(payload: BodyTypeUpdateRequest):
+    """
+    Update the body_type (and optionally sub_body_type) for a car.
+    Called from the Master page when admin clicks the arrow button.
+    """
+    try:
+        # Get brand_id from brand_name
+        brand_id = brand_db.get_brand_id_by_name(payload.brand_name)
+        if not brand_id:
+            raise HTTPException(status_code=404, detail=f"Brand '{payload.brand_name}' not found")
+
+        result = car_db.update_body_type(
+            brand_id=brand_id,
+            car_name=payload.car_name,
+            body_type=payload.body_type
+        )
+
+        if not result:
+            raise HTTPException(status_code=404, detail=f"Car '{payload.car_name}' not found under brand '{payload.brand_name}'")
+
+        return {
+            "success": True,
+            "message": f"Body type updated to '{payload.body_type}' for {payload.brand_name} {payload.car_name}",
+            "car": result
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+SUB_BODY_TYPES = [
+    "Mini",
+    "Compact",
+    "Mid-size",
+    "Full-size",
+    "Premium",
+    "Executive",
+    "Luxury",
+    "Sports",
+    "Estate",
+]
+
+@app.get("/api/sub-body-types")
+def get_sub_body_types():
+    """Returns a flat list of all sub body type options for the frontend dropdown. Optional field — no mapping to body_type."""
+    return {"success": True, "data": SUB_BODY_TYPES}
+
+
+class SubBodyTypeUpdateRequest(BaseModel):
+    brand_name: str
+    car_name: str
+    sub_body_type: Optional[str] = None
+
+@app.patch("/api/cars/sub-body-type")
+def update_car_sub_body_type(payload: SubBodyTypeUpdateRequest):
+    """
+    Standalone endpoint to update ONLY the sub_body_type of a car.
+    Does not touch body_type. sub_body_type is optional (can be set to null/None to clear it).
+    """
+    try:
+        brand_id = brand_db.get_brand_id_by_name(payload.brand_name)
+        if not brand_id:
+            raise HTTPException(status_code=404, detail=f"Brand '{payload.brand_name}' not found")
+
+        result = car_db.update_sub_body_type(
+            brand_id=brand_id,
+            car_name=payload.car_name,
+            sub_body_type=payload.sub_body_type
+        )
+
+        if not result:
+            raise HTTPException(status_code=404, detail=f"Car '{payload.car_name}' not found under brand '{payload.brand_name}'")
+
+        return {
+            "success": True,
+            "message": f"Sub body type updated to '{payload.sub_body_type}' for {payload.brand_name} {payload.car_name}",
+            "car": result
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 # ============== HELPER API: Get Variants by Car ==============
 
 # @app.get("/api/cars/{car_id}/variants")
@@ -4096,6 +4366,188 @@ def logout():
     )
 
     return response
+
+master_dropdown_db = MasterDropdownDbManager()
+new_model_db = NewModelDbManager()
+
+class MasterDropdownRequest(BaseModel):
+    category: str
+    value: str
+
+class NewModelRequest(BaseModel):
+    name: str
+    body_type: str = ""
+    sub_body_type: str = ""
+
+class NewModelVariantRequest(BaseModel):
+    variant_name: str
+    engine_type: str = ""
+    powertrain_type: str = ""
+    drive_type: str = ""
+    fuel_type: str = ""
+    price: float = 0.0
+
+class UpdateNewModelMetaRequest(BaseModel):
+    body_type: str
+    sub_body_type: str
+
+@app.get("/api/master-values")
+def get_master_values():
+    return {"success": True, "data": master_dropdown_db.get_all()}
+
+@app.post("/api/master-values")
+def add_master_value(req: MasterDropdownRequest):
+    result = master_dropdown_db.add(req.category, req.value)
+    if not result:
+        raise HTTPException(status_code=400, detail="Failed to add value or already exists")
+    return {"success": True, "data": result}
+
+@app.delete("/api/master-values/{value_id}")
+def delete_master_value(value_id: str):
+    if not master_dropdown_db.delete(value_id):
+        raise HTTPException(status_code=404, detail="Value not found")
+    return {"success": True}
+
+@app.get("/api/new-models")
+def get_new_models():
+    return {"success": True, "data": new_model_db.get_all_models()}
+
+@app.post("/api/new-models")
+def create_new_model(req: NewModelRequest):
+    return {"success": True, "data": new_model_db.create_model(req.name, req.body_type, req.sub_body_type)}
+
+@app.patch("/api/new-models/{model_id}")
+def update_new_model_meta(model_id: str, req: UpdateNewModelMetaRequest):
+    result = new_model_db.update_model_meta(model_id, req.body_type, req.sub_body_type)
+    if not result:
+        raise HTTPException(status_code=404, detail="Model not found")
+    return {"success": True}
+
+
+@app.delete("/api/new-models/{model_id}")
+def delete_new_model(model_id: str):
+    if not new_model_db.delete_model(model_id):
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    return {"success": True}
+
+@app.post("/api/new-models/{model_id}/variants")
+def add_new_model_variant(model_id: str, req: NewModelVariantRequest):
+    return {"success": True, "data": new_model_db.add_variant(
+        model_id, req.variant_name, req.engine_type, req.powertrain_type, req.drive_type, req.fuel_type, req.price
+    )}
+
+@app.patch("/api/new-models/variants/{variant_id}")
+def update_new_model_variant(variant_id: str, req: NewModelVariantRequest):
+    result = new_model_db.update_variant(
+        variant_id, req.variant_name, req.engine_type, req.powertrain_type, req.drive_type, req.fuel_type, req.price
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Variant not found")
+    return {"success": True, "data": result}
+
+@app.delete("/api/new-models/variants/{variant_id}")
+def delete_new_model_variant(variant_id: str):
+    if not new_model_db.delete_variant(variant_id):
+        raise HTTPException(status_code=404, detail="Variant not found")
+    return {"success": True}
+
+@app.delete("/api/new-models/variants/{nm_variant_id}/features")
+def clear_nm_variant_features(nm_variant_id: str):
+    try:
+        deleted_count = new_model_db.clear_nm_variant_features(nm_variant_id)
+        return {"success": True, "deleted": deleted_count}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+# ── NM Variant Feature Copy Endpoints ──────────────────────────────────────
+
+# @app.get("/api/new-models/variants/{variant_id}/features")
+# def get_nm_variant_features(variant_id: str):
+#     """Get all copied/stored features for a New Model variant."""
+#     try:
+#         data = new_model_db.get_nm_variant_features(variant_id)
+#         return {"success": True, "data": data, "count": len(data)}
+#     except Exception as e:
+#         import traceback; traceback.print_exc()
+#         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/new-models/variants/{nm_variant_id}/features")
+def get_nm_variant_features_endpoint(nm_variant_id: str):
+    try:
+        features = new_model_db.get_nm_variant_features(nm_variant_id)
+        return {"success": True, "data": features}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+class CopyFeaturesRequest(BaseModel):
+    car_id: str
+    variant_class: str
+    version: int = 1
+
+@app.post("/api/new-models/variants/{nm_variant_id}/copy-features")
+def copy_features_to_nm_variant(nm_variant_id: str, payload: CopyFeaturesRequest):
+    try:
+        result = new_model_db.copy_features_from_class(
+            nm_variant_id=nm_variant_id,
+            car_id=payload.car_id,
+            variant_class=payload.variant_class,
+            version=payload.version
+        )
+        return {"success": True, "data": result}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+class UpdateNMFeatureRequest(BaseModel):
+    feature_value: Optional[str] = None
+    cost_delta: Optional[float] = None
+
+# @app.patch("/api/new-models/variants/{nm_variant_id}/features/{feature_id}")
+# def update_nm_variant_feature_endpoint(nm_variant_id: str, feature_id: str, payload: UpdateNMFeatureRequest):
+#     try:
+#         updates = payload.dict(exclude_unset=True)
+#         if not updates:
+#             raise HTTPException(400, "No fields to update")
+
+#         result = new_model_db.update_nm_variant_feature(nm_variant_id, feature_id, updates)
+#         if not result:
+#             raise HTTPException(404, "Feature not found for this variant")
+
+#         return {"success": True, "data": result}
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         raise HTTPException(500, str(e))
+
+class UpdateNMFeatureRequest(BaseModel):
+    feature_value: Optional[str] = None
+    cost_delta: Optional[float] = None
+ 
+@app.patch("/api/new-models/variants/{nm_variant_id}/features/{feature_id}")
+def update_nm_variant_feature_endpoint(nm_variant_id: str, feature_id: str, payload: UpdateNMFeatureRequest):
+    try:
+        updates = payload.dict(exclude_unset=True)
+        if not updates:
+            raise HTTPException(400, "No fields to update")
+ 
+        result = new_model_db.upsert_nm_variant_feature(nm_variant_id, feature_id, updates)
+        if not result:
+            raise HTTPException(404, "Feature not found in features_master")
+ 
+        return {"success": True, "data": result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+sidebar_db = SidebarDbManager()
+
+@app.get("/api/sidebar-filters")
+def get_sidebar_filters():
+    return {"success": True, "data": sidebar_db.get_sidebar_data()}
+
+@app.get("/api/catalog/full-pricing")
+def get_full_catalog_pricing():
+    return {"success": True, "data": sidebar_db.get_full_catalog_pricing()}
+
 
 if __name__ == "__main__":
     import uvicorn

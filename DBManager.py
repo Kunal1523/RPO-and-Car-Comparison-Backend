@@ -1702,6 +1702,72 @@ class CarDbManager(DbManager):
                 cur.execute(query, (brand_id,))
                 rows = cur.fetchall()
         return [{"id": r[0], "name": r[1]} for r in rows]
+    
+    def update_body_type(self, brand_id: str, car_name: str, body_type: str):
+        query = """
+        UPDATE cars
+        SET body_type = %s
+        WHERE brand_id = %s
+        AND LOWER(name) = LOWER(%s)
+        RETURNING id, name, body_type;
+        """
+
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (body_type, brand_id, car_name))
+                row = cur.fetchone()
+                conn.commit()
+
+        if not row:
+            return None
+
+        return {
+            "id": row[0],
+            "name": row[1],
+            "body_type": row[2]
+        }
+    
+    def clear_body_type(self, brand_id: str, car_name: str):
+        query = """
+            UPDATE cars
+            SET body_type = NULL,
+                sub_body_type = NULL
+            WHERE brand_id = %s
+            AND LOWER(name)=LOWER(%s)
+            RETURNING id
+        """
+
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (brand_id, car_name))
+                r = cur.fetchone()
+                conn.commit()
+
+        return r is not None
+    
+    def update_sub_body_type(self, brand_id: str, car_name: str, sub_body_type: str | None):
+        query = """
+        UPDATE cars
+        SET sub_body_type = %s
+        WHERE brand_id = %s
+        AND LOWER(name) = LOWER(%s)
+        RETURNING id, name, sub_body_type;
+        """
+
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (sub_body_type, brand_id, car_name))
+                row = cur.fetchone()
+                conn.commit()
+
+        if not row:
+            return None
+
+        return {
+            "id": row[0],
+            "name": row[1],
+            "sub_body_type": row[2]
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -2080,22 +2146,171 @@ class FeatureDbManager(DbManager):
             # autocommit=True, no explicit commit needed
         return {"status": "success", "inserted_count": inserted_count}
 
+    # def get_feature_master_category_wise(self):
+    #     query = "SELECT id, name, category FROM features_master WHERE is_active = true ORDER BY category, name;"
+    #     with self.get_conn() as conn:
+    #         with conn.cursor() as cursor:
+    #             cursor.execute(query)
+    #             rows = cursor.fetchall()
+
+    #     result = {}
+    #     for feature_id, name, category in rows:
+    #         if category not in result:
+    #             result[category] = []
+    #         result[category].append({
+    #             "id": str(feature_id),
+    #             "name": name
+    #         })
+    #     return result
     def get_feature_master_category_wise(self):
-        query = "SELECT id, name, category FROM features_master WHERE is_active = true ORDER BY category, name;"
+        query = """
+        SELECT id, name, category, mapped_to_id,
+               EXISTS (SELECT 1 FROM features_master f2 WHERE f2.mapped_to_id = features_master.id) AS is_merged,
+               COALESCE(sort_order, 0) as sort_order
+        FROM features_master
+        WHERE is_active = true
+        AND mapped_to_id IS NULL
+        AND name NOT IN (
+            'Wheels Type',
+            'Lighting LED tail lamps',
+            'Dual tone pack (Black painted) Oustide door mirrors',
+            'Electronic Stability Program (ESP) with Hill Hold Control',
+            'ABS',
+            'ABS with EBD and Brake Assist',
+            'Reverse Parking Camera',
+            'Seat Belt Reminder',
+            'EBD'
+        )
+        ORDER BY category, COALESCE(sort_order, 0), name;
+        """
+
         with self.get_conn() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(query)
                 rows = cursor.fetchall()
 
         result = {}
-        for feature_id, name, category in rows:
+        for feature_id, name, category, mapped_to_id, is_merged, sort_order in rows:
             if category not in result:
                 result[category] = []
+
             result[category].append({
                 "id": str(feature_id),
-                "name": name
+                "name": name,
+                "isMerged": is_merged,
+                "sort_order": sort_order
             })
+
         return result
+
+    def get_all_master_features_flat(self):
+        query = """
+        SELECT id, name, category, COALESCE(sort_order, 0) as sort_order
+        FROM features_master
+        WHERE is_active = true
+        AND mapped_to_id IS NULL
+        AND name NOT IN (
+            'Wheels Type',
+            'Lighting LED tail lamps',
+            'Dual tone pack (Black painted) Oustide door mirrors',
+            'Electronic Stability Program (ESP) with Hill Hold Control',
+            'ABS',
+            'ABS with EBD and Brake Assist',
+            'Reverse Parking Camera',
+            'Seat Belt Reminder',
+            'EBD'
+        )
+        ORDER BY category, COALESCE(sort_order, 0), name;
+        """
+        with self.get_conn() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query)
+                rows = cursor.fetchall()
+        
+        return [{"feature_id": str(r[0]), "feature_name": r[1], "category": r[2]} for r in rows]
+
+    def soft_delete_feature_master(self, feature_id: str):
+        query = "UPDATE features_master SET is_active = false WHERE id = %s"
+        with self.get_conn() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, (feature_id,))
+                if cursor.rowcount == 0:
+                    raise Exception("Feature not found or already deleted")
+            # autocommit=True
+        return {"success": True, "message": "Feature deleted successfully"}
+
+    def reorder_features(self, updates: list):
+        """Bulk update sort_order for features. updates = [{id, sort_order}]"""
+        if not updates:
+            return {"success": True, "updated": 0}
+        with self.get_conn() as conn:
+            with conn.cursor() as cursor:
+                for item in updates:
+                    cursor.execute(
+                        "UPDATE features_master SET sort_order = %s WHERE id = %s",
+                        (item["sort_order"], item["id"])
+                    )
+            conn.commit()
+        return {"success": True, "updated": len(updates)}
+
+    def add_feature_master(self, name: str, category: str):
+        query = """
+        INSERT INTO features_master (name, category)
+        VALUES (%s, %s)
+        ON CONFLICT (name, category) DO NOTHING
+        RETURNING id, name, category;
+        """
+        with self.get_conn() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, (name, category))
+                row = cursor.fetchone()
+                if row:
+                    return {"id": str(row[0]), "name": row[1], "category": row[2]}
+                return None
+
+    def merge_features(self, feature_ids: list, target_name: str, target_category: str):
+        if not feature_ids:
+            raise ValueError("No feature IDs provided for merging")
+            
+        # 1. Ensure the target feature exists
+        target_feature = self.add_feature_master(target_name, target_category)
+        if not target_feature:
+            # If it already existed, fetch it
+            query = "SELECT id, name, category FROM features_master WHERE name = %s AND category = %s"
+            with self.get_conn() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(query, (target_name, target_category))
+                    row = cursor.fetchone()
+                    if row:
+                        target_feature = {"id": str(row[0]), "name": row[1], "category": row[2]}
+                    else:
+                        raise Exception("Failed to find or create target feature")
+                        
+        target_id = target_feature["id"]
+        
+        # 2. Update mapped_to_id for the given feature_ids
+        # Exclude the target_id itself just in case
+        ids_to_update = [fid for fid in feature_ids if fid != target_id]
+        if not ids_to_update:
+            return target_feature
+            
+        format_strings = ','.join(['%s'] * len(ids_to_update))
+        update_query = f"UPDATE features_master SET mapped_to_id = %s WHERE id IN ({format_strings})"
+        
+        with self.get_conn() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(update_query, [target_id] + ids_to_update)
+            conn.commit()
+            
+        return target_feature
+
+    def unmerge_features(self, parent_feature_id: str):
+        query = "UPDATE features_master SET mapped_to_id = NULL WHERE mapped_to_id = %s"
+        with self.get_conn() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, (parent_feature_id,))
+            conn.commit()
+        return {"success": True, "message": "Features unmerged successfully"}
 
     def normalize_feature_master(self):
         with self.get_conn() as conn:
@@ -2737,3 +2952,852 @@ class ChatHistoryDbManager(DbManager):
             "delta_direction": "increase" if total_delta > 0 else "decrease" if total_delta < 0 else "neutral",
             "breakdown": breakdown
         }
+
+class MasterDropdownDbManager(DbManager):
+    def get_all(self):
+        query = "SELECT id, category, value, is_active FROM master_dropdown_values ORDER BY category, value"
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query)
+                rows = cur.fetchall()
+        result = {}
+        for r in rows:
+            cat = r[1]
+            if cat not in result:
+                result[cat] = []
+            result[cat].append({"id": str(r[0]), "category": cat, "value": r[2], "is_active": r[3]})
+        return result
+
+    def add(self, category: str, value: str):
+        query = """
+            INSERT INTO master_dropdown_values (category, value)
+            VALUES (%s, %s)
+            ON CONFLICT (category, value) DO NOTHING
+            RETURNING id, category, value, is_active;
+        """
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (category, value))
+                r = cur.fetchone()
+                if not r:
+                    return None
+        return {"id": str(r[0]), "category": r[1], "value": r[2], "is_active": r[3]}
+
+    def delete(self, id: str):
+        query = "DELETE FROM master_dropdown_values WHERE id = %s RETURNING id"
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (id,))
+                r = cur.fetchone()
+                if not r:
+                    return False
+        return True
+
+class NewModelDbManager(DbManager):
+    def upsert_nm_variant_feature(self, nm_variant_id: str, feature_id: str, updates: dict):
+        """
+        UPSERT a feature value/cost_delta for an NM variant.
+        If row doesn't exist yet (user typing before paste), it creates it
+        by pulling feature_name + category from features_master.
+        original_copied_value is NEVER touched here.
+        """
+        allowed_fields = {"feature_value", "cost_delta"}
+        set_clauses = []
+        values = []
+        for key, val in updates.items():
+            if key not in allowed_fields:
+                continue
+            set_clauses.append(f"{key} = %s")
+            values.append(val)
+    
+        if not set_clauses:
+            return None
+    
+        set_clauses.append("updated_at = now()")
+    
+        # First try UPDATE
+        update_query = f"""
+            UPDATE new_model_variant_features
+            SET {', '.join(set_clauses)}
+            WHERE nm_variant_id = %s AND feature_id = %s
+            RETURNING id, feature_id, feature_name, category, feature_value,
+                    cost_delta, copied_from_variant_class, original_copied_value;
+        """
+        update_values = values + [nm_variant_id, feature_id]
+    
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(update_query, update_values)
+                r = cur.fetchone()
+    
+                if not r:
+                    # Row doesn't exist yet — fetch feature meta from features_master and INSERT
+                    cur.execute(
+                        "SELECT name, category FROM features_master WHERE id = %s",
+                        (feature_id,)
+                    )
+                    meta = cur.fetchone()
+                    if not meta:
+                        return None  # feature_id doesn't exist at all → 404
+    
+                    feature_name, category = meta
+    
+                    insert_query = """
+                        INSERT INTO new_model_variant_features
+                            (nm_variant_id, feature_id, feature_name, category,
+                            feature_value, cost_delta)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (nm_variant_id, feature_id) DO UPDATE
+                            SET feature_value = EXCLUDED.feature_value,
+                                cost_delta    = EXCLUDED.cost_delta,
+                                updated_at    = now()
+                        RETURNING id, feature_id, feature_name, category, feature_value,
+                                cost_delta, copied_from_variant_class, original_copied_value;
+                    """
+                    feature_value = updates.get("feature_value", "")
+                    cost_delta    = updates.get("cost_delta", 0)
+                    cur.execute(insert_query, (
+                        nm_variant_id, feature_id, feature_name, category,
+                        feature_value, cost_delta
+                    ))
+                    r = cur.fetchone()
+    
+            conn.commit()
+    
+        if not r:
+            return None
+    
+        return {
+            "id": str(r[0]),
+            "feature_id": str(r[1]),
+            "feature_name": r[2],
+            "category": r[3],
+            "feature_value": r[4],
+            "cost_delta": float(r[5] or 0),
+            "copied_from_variant_class": r[6],
+            "original_copied_value": r[7],
+        }
+    def clear_nm_variant_features(self, nm_variant_id: str) -> int:
+        """Delete all copied features for an NM variant. Returns count of deleted rows."""
+        query = """
+            DELETE FROM new_model_variant_features
+            WHERE nm_variant_id = %s
+            RETURNING id;
+        """
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (nm_variant_id,))
+                deleted = cur.rowcount
+            conn.commit()
+        return deleted
+    def get_all_models(self):
+        query_models = "SELECT id, name, body_type, sub_body_type FROM new_models ORDER BY created_at DESC"
+        query_variants = "SELECT id, new_model_id, variant_name, engine_type, powertrain_type, drive_type, fuel_type, price FROM new_model_variants ORDER BY created_at"
+        
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query_models)
+                models_rows = cur.fetchall()
+                cur.execute(query_variants)
+                variants_rows = cur.fetchall()
+
+        models = {}
+        for r in models_rows:
+            models[str(r[0])] = {
+                "id": str(r[0]), "name": r[1], "body_type": r[2], "sub_body_type": r[3], "variants": []
+            }
+        
+        for r in variants_rows:
+            model_id = str(r[1])
+            if model_id in models:
+                models[model_id]["variants"].append({
+                    "id": str(r[0]),
+                    "new_model_id": model_id,
+                    "variant_name": r[2],
+                    "engine_type": r[3],
+                    "powertrain_type": r[4],
+                    "drive_type": r[5],
+                    "fuel_type": r[6],
+                    "price": float(r[7]) if r[7] else None
+                })
+                
+        return list(models.values())
+
+    def create_model(self, name: str, body_type: str, sub_body_type: str):
+        query = "INSERT INTO new_models (name, body_type, sub_body_type) VALUES (%s, %s, %s) RETURNING id, name, body_type, sub_body_type"
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (name, body_type, sub_body_type))
+                r = cur.fetchone()
+        return {"id": str(r[0]), "name": r[1], "body_type": r[2], "sub_body_type": r[3], "variants": []}
+
+    def update_model_meta(self, model_id: str, body_type: str, sub_body_type: str):
+        query = """
+            UPDATE new_models 
+            SET body_type = %s, sub_body_type = %s 
+            WHERE id = %s 
+            RETURNING id, name, body_type, sub_body_type
+        """
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (body_type, sub_body_type, model_id))
+                r = cur.fetchone()
+                if not r:
+                    return None
+        return {"id": str(r[0]), "name": r[1], "body_type": r[2], "sub_body_type": r[3]}
+    def delete_model(self, model_id: str):
+        query = """
+            DELETE FROM new_models
+            WHERE id=%s
+            RETURNING id
+        """
+
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (model_id,))
+                r = cur.fetchone()
+
+                if not r:
+                    return False
+
+        return True
+    def add_variant(self, new_model_id: str, variant_name: str, engine_type: str, powertrain_type: str, drive_type: str, fuel_type: str, price: float):
+        query = """
+            INSERT INTO new_model_variants (new_model_id, variant_name, engine_type, powertrain_type, drive_type, fuel_type, price)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, new_model_id, variant_name, engine_type, powertrain_type, drive_type, fuel_type, price
+        """
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (new_model_id, variant_name, engine_type, powertrain_type, drive_type, fuel_type, price))
+                r = cur.fetchone()
+        return {
+            "id": str(r[0]), "new_model_id": str(r[1]), "variant_name": r[2],
+            "engine_type": r[3], "powertrain_type": r[4], "drive_type": r[5],
+            "fuel_type": r[6], "price": float(r[7]) if r[7] else None
+        }
+
+    def update_variant(self, variant_id: str, variant_name: str, engine_type: str, powertrain_type: str, drive_type: str, fuel_type: str, price: float):
+        query = """
+            UPDATE new_model_variants SET variant_name=%s, engine_type=%s, powertrain_type=%s, drive_type=%s, fuel_type=%s, price=%s, updated_at=now()
+            WHERE id=%s
+            RETURNING id, new_model_id, variant_name, engine_type, powertrain_type, drive_type, fuel_type, price
+        """
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (variant_name, engine_type, powertrain_type, drive_type, fuel_type, price, variant_id))
+                r = cur.fetchone()
+                if not r:
+                    return None
+        return {
+            "id": str(r[0]), "new_model_id": str(r[1]), "variant_name": r[2],
+            "engine_type": r[3], "powertrain_type": r[4], "drive_type": r[5],
+            "fuel_type": r[6], "price": float(r[7]) if r[7] else None
+        }
+
+    def delete_variant(self, variant_id: str):
+        query = "DELETE FROM new_model_variants WHERE id=%s RETURNING id"
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (variant_id,))
+                r = cur.fetchone()
+                if not r:
+                    return False
+        return True
+
+    # def get_nm_variant_features(self, nm_variant_id: str):
+    #     """Get all stored features for a New Model variant."""
+    #     query = """
+    #         SELECT id, nm_variant_id, feature_id, feature_name, category,
+    #                feature_value, sub_variant_values
+    #         FROM new_model_variant_features
+    #         WHERE nm_variant_id = %s
+    #         ORDER BY category, feature_name;
+    #     """
+    #     with self.get_conn() as conn:
+    #         with conn.cursor() as cur:
+    #             cur.execute(query, (nm_variant_id,))
+    #             rows = cur.fetchall()
+    #     return [
+    #         {
+    #             "id": str(r[0]),
+    #             "nm_variant_id": str(r[1]),
+    #             "feature_id": str(r[2]),
+    #             "feature_name": r[3],
+    #             "category": r[4],
+    #             "feature_value": r[5] or "",
+    #             "sub_variant_values": r[6] or {}
+    #         }
+    #         for r in rows
+    #     ]
+
+    def get_nm_variant_features(self, nm_variant_id: str):
+        """Get all stored features for a New Model variant, padded with all active master features."""
+        query = """
+            SELECT fm.id as master_feature_id, fm.name as master_feature_name, fm.category as master_category,
+                   nmf.id, nmf.nm_variant_id, nmf.feature_value, nmf.sub_variant_values, nmf.cost_delta,
+                   nmf.copied_from_variant_class, nmf.original_copied_value
+            FROM features_master fm
+            LEFT JOIN new_model_variant_features nmf 
+                   ON fm.id = nmf.feature_id AND nmf.nm_variant_id = %s
+            WHERE fm.is_active = true
+              AND fm.mapped_to_id IS NULL
+              AND fm.name NOT IN (
+                  'Wheels Type', 'Lighting LED tail lamps', 'Dual tone pack (Black painted) Oustide door mirrors',
+                  'Electronic Stability Program (ESP) with Hill Hold Control', 'ABS', 'ABS with EBD and Brake Assist',
+                  'Reverse Parking Camera', 'Seat Belt Reminder', 'EBD'
+              )
+            ORDER BY fm.category, COALESCE(fm.sort_order, 0), fm.name;
+        """
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (nm_variant_id,))
+                rows = cur.fetchall()
+        
+        result = []
+        for r in rows:
+            master_feature_id = str(r[0])
+            master_feature_name = r[1]
+            master_category = r[2]
+            
+            nmf_id = str(r[3]) if r[3] else None
+            
+            result.append({
+                "id": nmf_id,
+                "nm_variant_id": nm_variant_id,
+                "feature_id": master_feature_id,
+                "feature_name": master_feature_name,
+                "category": master_category,
+                "feature_value": r[5] or "",
+                "sub_variant_values": r[6] or {},
+                "cost_delta": float(r[7] or 0),
+                "copied_from_variant_class": r[8],
+                "original_copied_value": r[9]
+            })
+        return result
+
+    # def copy_features_from_class(self, nm_variant_id: str, car_id: str, variant_class: str, version: int = 1):
+    #     """
+    #     Copy features from all sub-variants of a given variant_class (for a car_id)
+    #     into new_model_variant_features for nm_variant_id.
+    #     For each feature_id, sub_variant_values = {sv_name: value} for all sub-variants.
+    #     feature_value is set to the first non-empty value across sub-variants.
+    #     """
+    #     # 1. Get all sub-variants for the class
+    #     sv_query = """
+    #         SELECT id, name FROM variants
+    #         WHERE car_id = %s AND variant_class = %s AND is_latest = true
+    #         ORDER BY name;
+    #     """
+    #     # 2. For each sub-variant get its features
+    #     feat_query = """
+    #         SELECT vf.feature_id, vf.value, fm.name AS feature_name, fm.category
+    #         FROM variant_features vf
+    #         JOIN features_master fm ON vf.feature_id = fm.id
+    #         WHERE vf.variant_id = %s AND vf.version = %s AND fm.is_active = true
+    #     """
+
+    #     sub_variants = []
+    #     features_by_sv = {}  # sv_name -> {feature_id: {value, feature_name, category}}
+
+    #     with self.get_conn() as conn:
+    #         with conn.cursor() as cur:
+    #             cur.execute(sv_query, (car_id, variant_class))
+    #             sv_rows = cur.fetchall()
+    #             for sv_id, sv_name in sv_rows:
+    #                 sub_variants.append({"id": str(sv_id), "name": sv_name})
+
+    #             for sv in sub_variants:
+    #                 cur.execute(feat_query, (sv["id"], version))
+    #                 feat_rows = cur.fetchall()
+    #                 features_by_sv[sv["name"]] = {
+    #                     str(f[0]): {"value": f[1] or "", "feature_name": f[2], "category": f[3]}
+    #                     for f in feat_rows
+    #                 }
+
+    #     if not sub_variants:
+    #         return {"copied": 0, "message": "No sub-variants found for the given class"}
+
+    #     # 3. Collect all unique feature_ids across all sub-variants
+    #     all_feature_ids = {}
+    #     for sv_name, feats in features_by_sv.items():
+    #         for fid, meta in feats.items():
+    #             if fid not in all_feature_ids:
+    #                 all_feature_ids[fid] = {"feature_name": meta["feature_name"], "category": meta["category"]}
+
+    #     if not all_feature_ids:
+    #         return {"copied": 0, "message": "No features found for any sub-variant in this class"}
+
+    #     # 4. Build upsert data
+    #     upsert_query = """
+    #         INSERT INTO new_model_variant_features
+    #             (nm_variant_id, feature_id, feature_name, category, feature_value, sub_variant_values)
+    #         VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+    #         ON CONFLICT (nm_variant_id, feature_id)
+    #         DO UPDATE SET
+    #             feature_name = EXCLUDED.feature_name,
+    #             category = EXCLUDED.category,
+    #             feature_value = EXCLUDED.feature_value,
+    #             sub_variant_values = EXCLUDED.sub_variant_values,
+    #             updated_at = now();
+    #     """
+
+    #     import json
+    #     count = 0
+    #     with self.get_conn() as conn:
+    #         with conn.cursor() as cur:
+    #             for fid, meta in all_feature_ids.items():
+    #                 # Build per-sub-variant value map
+    #                 sv_values = {}
+    #                 first_value = ""
+    #                 for sv in sub_variants:
+    #                     val = features_by_sv[sv["name"]].get(fid, {}).get("value", "")
+    #                     sv_values[sv["name"]] = val
+    #                     if not first_value and val:
+    #                         first_value = val
+
+    #                 cur.execute(upsert_query, (
+    #                     nm_variant_id,
+    #                     fid,
+    #                     meta["feature_name"],
+    #                     meta["category"],
+    #                     first_value,
+    #                     json.dumps(sv_values)
+    #                 ))
+    #                 count += 1
+    #         conn.commit()
+
+    #     return {"copied": count, "sub_variants": [sv["name"] for sv in sub_variants]}
+
+
+    def copy_features_from_class(self, nm_variant_id: str, car_id: str, variant_class: str, version: int = 1):
+        """
+        Copy features from all sub-variants of a given variant_class (for a car_id)
+        into new_model_variant_features for nm_variant_id.
+        For each feature_id, sub_variant_values = {sv_name: value} for all sub-variants.
+        feature_value is set to the first non-empty value across sub-variants.
+        Tags each row with copied_from_variant_class + original_copied_value (snapshot for edit-detection).
+        """
+        sv_query = """
+            SELECT id, name FROM variants
+            WHERE car_id = %s AND variant_class = %s AND is_latest = true
+            ORDER BY name;
+        """
+        feat_query = """
+            SELECT vf.feature_id, vf.value, fm.name AS feature_name, fm.category
+            FROM variant_features vf
+            JOIN features_master fm ON vf.feature_id = fm.id
+            WHERE vf.variant_id = %s AND vf.version = %s AND fm.is_active = true
+        """
+
+        sub_variants = []
+        features_by_sv = {}
+
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sv_query, (car_id, variant_class))
+                sv_rows = cur.fetchall()
+                for sv_id, sv_name in sv_rows:
+                    sub_variants.append({"id": str(sv_id), "name": sv_name})
+
+                for sv in sub_variants:
+                    cur.execute(feat_query, (sv["id"], version))
+                    feat_rows = cur.fetchall()
+                    features_by_sv[sv["name"]] = {
+                        str(f[0]): {"value": f[1] or "", "feature_name": f[2], "category": f[3]}
+                        for f in feat_rows
+                    }
+
+        if not sub_variants:
+            return {"copied": 0, "message": "No sub-variants found for the given class"}
+
+        all_feature_ids = {}
+        for sv_name, feats in features_by_sv.items():
+            for fid, meta in feats.items():
+                if fid not in all_feature_ids:
+                    all_feature_ids[fid] = {"feature_name": meta["feature_name"], "category": meta["category"]}
+
+        if not all_feature_ids:
+            return {"copied": 0, "message": "No features found for any sub-variant in this class"}
+
+        upsert_query = """
+            INSERT INTO new_model_variant_features
+                (nm_variant_id, feature_id, feature_name, category, feature_value,
+                sub_variant_values, copied_from_variant_class, original_copied_value)
+            VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s)
+            ON CONFLICT (nm_variant_id, feature_id)
+            DO UPDATE SET
+                feature_name = EXCLUDED.feature_name,
+                category = EXCLUDED.category,
+                feature_value = EXCLUDED.feature_value,
+                sub_variant_values = EXCLUDED.sub_variant_values,
+                copied_from_variant_class = EXCLUDED.copied_from_variant_class,
+                original_copied_value = EXCLUDED.original_copied_value,
+                updated_at = now();
+        """
+
+        import json
+        count = 0
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                for fid, meta in all_feature_ids.items():
+                    sv_values = {}
+                    first_value = ""
+                    for sv in sub_variants:
+                        val = features_by_sv[sv["name"]].get(fid, {}).get("value", "")
+                        sv_values[sv["name"]] = val
+                        if not first_value and val:
+                            first_value = val
+
+                    cur.execute(upsert_query, (
+                        nm_variant_id,
+                        fid,
+                        meta["feature_name"],
+                        meta["category"],
+                        first_value,
+                        json.dumps(sv_values),
+                        variant_class,      # copied_from_variant_class
+                        first_value         # original_copied_value (snapshot)
+                    ))
+                    count += 1
+            conn.commit()
+
+        return {"copied": count, "sub_variants": [sv["name"] for sv in sub_variants]}
+
+    # def update_nm_variant_feature(self, nm_variant_id: str, feature_id: str, value: str):
+    #     """Update the feature_value for a specific NM variant feature."""
+    #     query = """
+    #         UPDATE new_model_variant_features
+    #         SET feature_value = %s, updated_at = now()
+    #         WHERE nm_variant_id = %s AND feature_id = %s
+    #         RETURNING id;
+    #     """
+    #     with self.get_conn() as conn:
+    #         with conn.cursor() as cur:
+    #             cur.execute(query, (value, nm_variant_id, feature_id))
+    #             r = cur.fetchone()
+    #         conn.commit()
+    #     return bool(r)
+    def update_nm_variant_feature(self, nm_variant_id: str, feature_id: str, updates: dict):
+        """
+        Inline update of feature_value and/or cost_delta for a specific NM variant feature.
+        original_copied_value is NEVER modified here — it stays as the copy-time snapshot
+        so edits can be detected later (feature_value != original_copied_value).
+        """
+        allowed_fields = {"feature_value", "cost_delta"}
+        set_clauses = []
+        values = []
+        for key, val in updates.items():
+            if key not in allowed_fields:
+                continue
+            set_clauses.append(f"{key} = %s")
+            values.append(val)
+
+        if not set_clauses:
+            return None
+
+        set_clauses.append("updated_at = now()")
+
+        query = f"""
+            UPDATE new_model_variant_features
+            SET {', '.join(set_clauses)}
+            WHERE nm_variant_id = %s AND feature_id = %s
+            RETURNING id, feature_id, feature_name, category, feature_value,
+                    cost_delta, copied_from_variant_class, original_copied_value;
+        """
+        values.extend([nm_variant_id, feature_id])
+
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, values)
+                r = cur.fetchone()
+                conn.commit()
+
+        if not r:
+            return None
+
+        return {
+            "id": str(r[0]), "feature_id": str(r[1]), "feature_name": r[2], "category": r[3],
+            "feature_value": r[4], "cost_delta": float(r[5] or 0),
+            "copied_from_variant_class": r[6], "original_copied_value": r[7]
+        }
+
+class SidebarDbManager(DbManager):
+
+    def get_sidebar_data(self):
+        # These are the exact feature UUIDs from features_master
+        FEATURE_IDS = {
+            "engine_type":       "2f2c9a92-2933-4d3c-9497-05166c1e3bfd",
+            "transmission_type": "e03ef22e-9dd9-497f-a63e-a66498865dec",
+            "fuel_type":         "9e7edfff-c83f-4fec-96e9-8dc3a430caa9",
+            "drive_type":        "769ad0f5-a7fb-4965-8260-fa1408e11fd7",
+        }
+    
+        # Existing variants — pull price + 4 feature values
+        # We use MIN(p.ex_showroom_price) for price (already in paise, divide by 100000)
+        # For each of the 4 features, we pick any one distinct value for the variant_class
+        # (they tend to be the same across sub-variants; if multiple, we take MIN for text = first alphabetically)
+        query_existing = """
+            SELECT
+                b.name                          AS brand_name,
+                c.name                          AS car_name,
+                c.body_type,
+                v.version,
+                v.variant_class,
+                MIN(p.ex_showroom_price)        AS ex_showroom_price,
+                MAX(CASE WHEN vf.feature_id = %(engine_type)s       THEN vf.value END) AS engine_type,
+                MAX(CASE WHEN vf.feature_id = %(transmission_type)s THEN vf.value END) AS transmission_type,
+                MAX(CASE WHEN vf.feature_id = %(fuel_type)s         THEN vf.value END) AS fuel_type,
+                MAX(CASE WHEN vf.feature_id = %(drive_type)s        THEN vf.value END) AS drive_type
+            FROM brands b
+            JOIN cars c        ON b.id = c.brand_id
+            JOIN variants v    ON c.id = v.car_id
+            JOIN pricing p     ON v.id = p.variant_id AND p.is_latest = true
+            LEFT JOIN variant_features vf
+                ON vf.variant_id = v.id
+                AND vf.feature_id IN (
+                        %(engine_type)s,
+                        %(transmission_type)s,
+                        %(fuel_type)s,
+                        %(drive_type)s
+                    )
+                AND vf.version = v.version
+            WHERE v.is_latest = true
+            GROUP BY b.name, c.name, c.body_type, v.version, v.variant_class
+            ORDER BY b.name, c.name, v.variant_class
+        """
+    
+        query_new = """
+            SELECT
+                'NM'                AS brand_name,
+                m.name              AS car_name,
+                m.body_type,
+                1                   AS version,
+                v.variant_name      AS variant_class,
+                v.id                AS variant_id,
+                v.price             AS ex_showroom_price,
+                v.engine_type,
+                v.powertrain_type   AS transmission_type,
+                v.fuel_type,
+                v.drive_type
+            FROM new_models m
+            JOIN new_model_variants v ON m.id = v.new_model_id
+            ORDER BY m.name, v.variant_name
+        """
+    
+        results = []
+        with self.get_conn() as conn:
+            with conn.cursor() as cur:
+    
+                # ── Existing models ──────────────────────────────────────────────
+                cur.execute(query_existing, FEATURE_IDS)
+                for row in cur.fetchall():
+                    results.append({
+                        "brand":             row[0],
+                        "model":             row[1],
+                        "body_type":         row[2] if row[2] else "Other",
+                        "version":           str(row[3]),
+                        "variant":           row[4],
+                        "variant_id":        "",
+                        "price":             float(row[5]) / 100000.0 if row[5] is not None else 0.0,
+                        "engine_type":       row[6] or "",
+                        "transmission_type": row[7] or "",
+                        "fuel_type":         row[8] or "",
+                        "drive_type":        row[9] or "",
+                        "is_new_model":      False,
+                    })
+    
+                # ── New Models ───────────────────────────────────────────────────
+                cur.execute(query_new)
+                for row in cur.fetchall():
+                    results.append({
+                        "brand":             row[0],
+                        "model":             row[1],
+                        "body_type":         row[2] if row[2] else "Other",
+                        "version":           str(row[3]),
+                        "variant":           row[4],
+                        "variant_id":        str(row[5]),
+                        "price":             float(row[6]) / 100000.0 if row[6] is not None else 0.0,
+                        "engine_type":       row[7] or "",
+                        "transmission_type": row[8] or "",
+                        "fuel_type":         row[9] or "",
+                        "drive_type":        row[10] or "",
+                        "is_new_model":      True,
+                    })
+    
+        return results
+
+
+    def get_full_catalog_pricing(self):
+        """
+        Returns ALL variants (existing + new models) with FULL per-config pricing,
+        grouped by variant_class -> list of sub-variant configs.
+        No aggregation/collapsing — every fuel/engine/transmission combo is preserved.
+        Meant to be loaded ONCE on app load and cached client-side.
+        """
+        FEATURE_IDS = {
+            "engine_type":       "2f2c9a92-2933-4d3c-9497-05166c1e3bfd",
+            "transmission_type": "e03ef22e-9dd9-497f-a63e-a66498865dec",
+            "fuel_type":         "9e7edfff-c83f-4fec-96e9-8dc3a430caa9",
+            "drive_type":        "769ad0f5-a7fb-4965-8260-fa1408e11fd7",
+        }
+
+        # ── Existing models: one row per sub-variant (v.id), NOT collapsed by variant_class ──
+        query_existing = """
+            SELECT
+                b.name                          AS brand_name,
+                c.name                          AS car_name,
+                c.body_type,
+                v.version,
+                v.variant_class,
+                v.id                            AS sub_variant_id,
+                p.id                            AS pricing_id,
+                p.ex_showroom_price,
+                p.currency,
+                p.paint_type,
+                MAX(CASE WHEN vf.feature_id = %(engine_type)s       THEN vf.value END) AS engine_type,
+                MAX(CASE WHEN vf.feature_id = %(transmission_type)s THEN vf.value END) AS transmission_type,
+                MAX(CASE WHEN vf.feature_id = %(fuel_type)s         THEN vf.value END) AS fuel_type,
+                MAX(CASE WHEN vf.feature_id = %(drive_type)s        THEN vf.value END) AS drive_type
+            FROM brands b
+            JOIN cars c        ON b.id = c.brand_id
+            JOIN variants v    ON c.id = v.car_id
+            JOIN pricing p     ON v.id = p.variant_id AND p.is_latest = true
+            LEFT JOIN variant_features vf
+                ON vf.variant_id = v.id
+                AND vf.feature_id IN (
+                        %(engine_type)s,
+                        %(transmission_type)s,
+                        %(fuel_type)s,
+                        %(drive_type)s
+                    )
+                AND vf.version = v.version
+            WHERE v.is_latest = true
+            GROUP BY b.name, c.name, c.body_type, v.version, v.variant_class, v.id, p.id, p.ex_showroom_price, p.currency, p.paint_type
+            ORDER BY b.name, c.name, v.variant_class, p.ex_showroom_price
+        """
+
+        query_new = """
+            SELECT
+                'NM'                AS brand_name,
+                m.name              AS car_name,
+                m.body_type,
+                1                   AS version,
+                v.variant_name      AS variant_class,
+                v.id                AS sub_variant_id,
+                v.id                AS pricing_id,
+                v.price             AS ex_showroom_price,
+                'INR'               AS currency,
+                NULL                AS paint_type,
+                v.engine_type,
+                v.powertrain_type   AS transmission_type,
+                v.fuel_type,
+                v.drive_type
+            FROM new_models m
+            JOIN new_model_variants v ON m.id = v.new_model_id
+            ORDER BY m.name, v.variant_name
+        """
+
+        # variant_class -> { brand, model, body_type, sub_variants: [...] }
+        grouped: dict = {}
+
+        def add_row(row, is_new_model: bool):
+            (brand, model, body_type, version, variant_class,
+            sub_variant_id, pricing_id, price, currency, paint_type,
+            engine_type, transmission_type, fuel_type, drive_type) = row
+
+            key = (brand, model, str(version), variant_class)
+            if key not in grouped:
+                grouped[key] = {
+                    "brand": brand,
+                    "model": model,
+                    "body_type": body_type or "Other",
+                    "version": str(version),
+                    "variant_class": variant_class,
+                    "is_new_model": is_new_model,
+                    "sub_variants": []
+                }
+
+            grouped[key]["sub_variants"].append({
+                "sub_variant_id": str(sub_variant_id),
+                "pricing_id": str(pricing_id),
+                "ex_showroom_price": float(price) if price is not None else 0.0,
+                "currency": currency or "INR",
+                "paint_type": paint_type or "",
+                "engine_type": engine_type or "",
+                "transmission_type": transmission_type or "",
+                "fuel_type": fuel_type or "",
+                "drive_type": drive_type or "",
+            })
+
+        with self.get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query_existing, FEATURE_IDS)
+                    for row in cur.fetchall():
+                        add_row(row, is_new_model=False)
+
+                    cur.execute(query_new)
+                    for row in cur.fetchall():
+                        add_row(row, is_new_model=True)
+
+        return list(grouped.values())
+    # def get_sidebar_data(self):
+    #     query_existing = """
+    #         SELECT 
+    #             b.name as brand_name,
+    #             c.name as car_name,
+    #             c.body_type,
+    #             v.version,
+    #             v.variant_class,
+    #             '' as variant_id,
+    #             MIN(p.ex_showroom_price) as ex_showroom_price
+    #         FROM brands b
+    #         JOIN cars c ON b.id = c.brand_id
+    #         JOIN variants v ON c.id = v.car_id
+    #         JOIN pricing p ON v.id = p.variant_id
+    #         WHERE v.is_latest = true AND p.is_latest = true
+    #         GROUP BY b.name, c.name, c.body_type, v.version, v.variant_class
+    #     """
+        
+    #     query_new = """
+    #         SELECT
+    #             'NM' as brand_name,
+    #             m.name as car_name,
+    #             m.body_type,
+    #             1 as version,
+    #             v.variant_name as variant_class,
+    #             v.id as variant_id,
+    #             v.price as ex_showroom_price
+    #         FROM new_models m
+    #         JOIN new_model_variants v ON m.id = v.new_model_id
+    #     """
+        
+    #     results = []
+    #     with self.get_conn() as conn:
+    #         with conn.cursor() as cur:
+    #             cur.execute(query_existing)
+    #             for row in cur.fetchall():
+    #                 results.append({
+    #                     "brand": row[0],
+    #                     "model": row[1],
+    #                     "body_type": row[2] if row[2] else "Other",
+    #                     "version": str(row[3]),
+    #                     "variant": row[4],
+    #                     "variant_id": str(row[5]),
+    #                     "price": float(row[6]) / 100000.0 if row[6] is not None else 0.0,
+    #                     "is_new_model": False
+    #                 })
+                    
+    #             cur.execute(query_new)
+    #             for row in cur.fetchall():
+    #                 results.append({
+    #                     "brand": row[0],
+    #                     "model": row[1],
+    #                     "body_type": row[2] if row[2] else "Other",
+    #                     "version": str(row[3]),
+    #                     "variant": row[4],
+    #                     "variant_id": str(row[5]),
+    #                     "price": float(row[6]) / 100000.0 if row[6] is not None else 0.0,
+    #                     "is_new_model": True
+    #                 })
+    #     return results
