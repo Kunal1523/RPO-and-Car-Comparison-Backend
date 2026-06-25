@@ -2255,9 +2255,10 @@ class FeatureDbManager(DbManager):
 
     def add_feature_master(self, name: str, category: str):
         query = """
-        INSERT INTO features_master (name, category)
-        VALUES (%s, %s)
-        ON CONFLICT (name, category) DO NOTHING
+        INSERT INTO features_master (name, category, is_active)
+        VALUES (%s, %s, true)
+        ON CONFLICT (name, category) DO UPDATE
+        SET is_active = true, mapped_to_id = NULL
         RETURNING id, name, category;
         """
         with self.get_conn() as conn:
@@ -3253,7 +3254,25 @@ class NewModelDbManager(DbManager):
             with conn.cursor() as cur:
                 cur.execute(query, (nm_variant_id,))
                 rows = cur.fetchall()
-        
+
+                # Fetch core variant properties that act as features
+                cur.execute("""
+                    SELECT engine_type, powertrain_type, drive_type, fuel_type
+                    FROM new_model_variants
+                    WHERE id = %s
+                """, (nm_variant_id,))
+                core_row = cur.fetchone()
+
+        # Map core properties to standard feature names
+        core_overrides = {}
+        if core_row:
+            core_overrides = {
+                "engine type": core_row[0] or "",
+                "transmission type": core_row[1] or "",
+                "drive type": core_row[2] or "",
+                "fuel type": core_row[3] or ""
+            }
+
         result = []
         for r in rows:
             master_feature_id = str(r[0])
@@ -3261,6 +3280,12 @@ class NewModelDbManager(DbManager):
             master_category = r[2]
             
             nmf_id = str(r[3]) if r[3] else None
+            feature_value = r[5] or ""
+
+            # Override with core values if applicable
+            f_name_lower = master_feature_name.lower().strip()
+            if f_name_lower in core_overrides and core_overrides[f_name_lower]:
+                feature_value = core_overrides[f_name_lower]
             
             result.append({
                 "id": nmf_id,
@@ -3268,7 +3293,7 @@ class NewModelDbManager(DbManager):
                 "feature_id": master_feature_id,
                 "feature_name": master_feature_name,
                 "category": master_category,
-                "feature_value": r[5] or "",
+                "feature_value": feature_value,
                 "sub_variant_values": r[6] or {},
                 "cost_delta": float(r[7] or 0),
                 "copied_from_variant_class": r[8],

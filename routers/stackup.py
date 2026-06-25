@@ -136,7 +136,7 @@ def upsert_pref(
                 """
                 INSERT INTO user_feature_stackup_prefs
                     (id, user_id, variant_ref_type, variant_id, feature_id, feature_name, is_hidden, display_order, updated_at)
-                VALUES (%s, %s, %s, %s::uuid, %s, %s, COALESCE(%s, false), %s, now())
+                VALUES (%s, %s, %s, %s, %s, %s, COALESCE(%s, false), %s, now())
                 ON CONFLICT (user_id, variant_ref_type, variant_id, feature_name)
                 DO UPDATE SET
                     is_hidden = COALESCE(EXCLUDED.is_hidden, user_feature_stackup_prefs.is_hidden),
@@ -174,7 +174,7 @@ def reorder_prefs(
                     """
                     INSERT INTO user_feature_stackup_prefs
                         (id, user_id, variant_ref_type, variant_id, feature_name, display_order, updated_at)
-                    VALUES (%s, %s, %s, %s::uuid, %s, %s, now())
+                    VALUES (%s, %s, %s, %s, %s, %s, now())
                     ON CONFLICT (user_id, variant_ref_type, variant_id, feature_name)
                     DO UPDATE SET display_order = EXCLUDED.display_order, updated_at = now()
                     """,

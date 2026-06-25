@@ -4549,6 +4549,79 @@ def get_full_catalog_pricing():
     return {"success": True, "data": sidebar_db.get_full_catalog_pricing()}
 
 
+from starlette.requests import Request
+from fastapi.responses import JSONResponse
+import json
+
+@app.middleware("http")
+async def audit_middleware(request: Request, call_next):
+    path = request.url.path
+    method = request.method
+    
+    if method in ["POST", "PUT", "PATCH", "DELETE"]:
+        protected_prefixes = [
+            "/api/master-values",
+            "/api/cars/body-type",
+            "/api/cars/sub-body-type",
+            "/api/new-models",
+            "/features/master",
+            "/api/feature-master"
+        ]
+        if any(path.startswith(p) for p in protected_prefixes):
+            user_email = request.headers.get("X-User-Email") or request.headers.get("x-user-email")
+            if user_email != "msiluser3@gmail.com":
+                return JSONResponse(status_code=403, content={"success": False, "detail": "Only msiluser3@gmail.com can perform this action"})
+            
+            body_bytes = await request.body()
+            async def receive():
+                return {"type": "http.request", "body": body_bytes}
+            request._receive = receive
+            
+            custom_msg = request.headers.get("X-Audit-Message") or request.headers.get("x-audit-message")
+            custom_entity_name = request.headers.get("X-Audit-Entity-Name") or request.headers.get("x-audit-entity-name")
+            
+            new_val = None
+            try:
+                if body_bytes:
+                    new_val = json.loads(body_bytes)
+            except Exception:
+                pass
+                
+            if custom_msg:
+                if isinstance(new_val, dict):
+                    new_val["_audit_msg"] = custom_msg
+                else:
+                    new_val = {"_audit_msg": custom_msg}
+                
+            response = await call_next(request)
+            
+            if response.status_code in [200, 201]:
+                try:
+                    from audit_db import AuditLogDbManager
+                    audit_db = AuditLogDbManager()
+                    audit_db.log(
+                        section="Master Page",
+                        action=method,
+                        entity_type=path,
+                        entity_name=custom_entity_name or (path.split('/')[-1] or path),
+                        performed_by=user_email,
+                        new_value=new_val
+                    )
+                except Exception as e:
+                    print("Audit log failed:", e)
+            return response
+            
+    return await call_next(request)
+
+@app.get("/api/audit-logs")
+def get_audit_logs(limit: int = 100, offset: int = 0):
+    try:
+        from audit_db import AuditLogDbManager
+        audit_db = AuditLogDbManager()
+        return {"success": True, "data": audit_db.get_logs(limit=limit, offset=offset)}
+    except Exception as e:
+        return {"success": False, "detail": str(e)}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app=app, host="127.0.0.1", port=8000, reload=False)
