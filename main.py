@@ -2105,7 +2105,7 @@ def compare_mixed(payload: MixedCompareRequest):
             with conn.cursor() as cur:
                 for plan_id in payload.plan_ids:
                     query = """
-                        SELECT m.name as model_name, v.variant_name, v.engine_type, v.powertrain_type, v.fuel_type, v.price
+                        SELECT m.name as model_name, v.variant_name, v.engine_type, v.powertrain_type, v.fuel_type, v.price, v.drive_type
                         FROM new_model_variants v
                         JOIN new_models m ON v.new_model_id = m.id
                         WHERE v.id = %s
@@ -2114,19 +2114,16 @@ def compare_mixed(payload: MixedCompareRequest):
                     row = cur.fetchone()
                     if not row:
                         continue 
-                    # import pdb
-                    # pdb.set_trace()
-                    print(f"row: {row}")
 
                     model_name = row[0]
                     variant_name = row[1]
-                    engine_type = row[2]
-                    powertrain_type = row[3]
-                    fuel_type = row[4]
+                    engine_type = row[2] or ""
+                    powertrain_type = row[3] or ""
+                    fuel_type = row[4] or ""
                     price = float(row[5]) if row[5] else 0.0
+                    drive_type = row[6] or ""
 
                     pricing_list = []
-                    # if price > 0:
                     pricing_list.append({
                         "currency": "INR",
                         "ex_showroom_price": price,
@@ -2145,7 +2142,6 @@ def compare_mixed(payload: MixedCompareRequest):
 
                     # Fetch copied features for this NM variant
                     nm_features_rows = new_model_db.get_nm_variant_features(str(plan_id))
-                    nm_merged_features = []
 
                     nm_merged_dict = {}
                     for nf in nm_features_rows:
@@ -2180,6 +2176,30 @@ def compare_mixed(payload: MixedCompareRequest):
                                 "cost_delta": nf.get("cost_delta", 0),
                                 "is_edited": is_edited,
                                 "copied_from": nf.get("copied_from_variant_class")
+                            }
+
+                    # Override/Inject the 4 core specs with exact feature_master IDs so they seamlessly map in the UI
+                    core_features = {
+                        "2f2c9a92-2933-4d3c-9497-05166c1e3bfd": {"name": "Engine Type", "category": "Engine", "val": engine_type},
+                        "e03ef22e-9dd9-497f-a63e-a66498865dec": {"name": "Transmission Type", "category": "Transmission", "val": powertrain_type},
+                        "9e7edfff-c83f-4fec-96e9-8dc3a430caa9": {"name": "Fuel Type", "category": "Fuel", "val": fuel_type},
+                        "769ad0f5-a7fb-4965-8260-fa1408e11fd7": {"name": "Drive Type", "category": "Transmission", "val": drive_type}
+                    }
+
+                    for c_fid, c_meta in core_features.items():
+                        if c_fid in nm_merged_dict:
+                            nm_merged_dict[c_fid]["value"] = c_meta["val"]
+                            nm_merged_dict[c_fid]["sub_variant_values"] = {variant_name: c_meta["val"]}
+                        else:
+                            nm_merged_dict[c_fid] = {
+                                "feature_id": c_fid,
+                                "feature_name": c_meta["name"],
+                                "category": c_meta["category"],
+                                "sub_variant_values": {variant_name: c_meta["val"]},
+                                "value": c_meta["val"],
+                                "cost_delta": 0,
+                                "is_edited": False,
+                                "copied_from": None
                             }
 
                     nm_merged_features = list(nm_merged_dict.values())

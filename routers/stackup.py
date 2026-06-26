@@ -41,6 +41,7 @@ class ReorderRequest(BaseModel):
     variant_ref_type: VariantRefType
     variant_id: str
     ordered_feature_names: list[str] = Field(..., min_items=1)
+    hidden_states: Optional[dict[str, bool]] = None
 
 
 @router.get("/prefs")
@@ -170,16 +171,29 @@ def reorder_prefs(
     with db.get_conn() as conn:
         with conn.cursor() as cur:
             for idx, feature_name in enumerate(payload.ordered_feature_names):
-                cur.execute(
-                    """
-                    INSERT INTO user_feature_stackup_prefs
-                        (id, user_id, variant_ref_type, variant_id, feature_name, display_order, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, now())
-                    ON CONFLICT (user_id, variant_ref_type, variant_id, feature_name)
-                    DO UPDATE SET display_order = EXCLUDED.display_order, updated_at = now()
-                    """,
-                    (str(uuid_lib.uuid4()), user_email, payload.variant_ref_type, payload.variant_id, feature_name, idx),
-                )
+                is_hidden = payload.hidden_states.get(feature_name) if payload.hidden_states else None
+                if is_hidden is not None:
+                    cur.execute(
+                        """
+                        INSERT INTO user_feature_stackup_prefs
+                            (id, user_id, variant_ref_type, variant_id, feature_name, display_order, is_hidden, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, now())
+                        ON CONFLICT (user_id, variant_ref_type, variant_id, feature_name)
+                        DO UPDATE SET display_order = EXCLUDED.display_order, is_hidden = EXCLUDED.is_hidden, updated_at = now()
+                        """,
+                        (str(uuid_lib.uuid4()), user_email, payload.variant_ref_type, payload.variant_id, feature_name, idx, is_hidden),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO user_feature_stackup_prefs
+                            (id, user_id, variant_ref_type, variant_id, feature_name, display_order, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, now())
+                        ON CONFLICT (user_id, variant_ref_type, variant_id, feature_name)
+                        DO UPDATE SET display_order = EXCLUDED.display_order, updated_at = now()
+                        """,
+                        (str(uuid_lib.uuid4()), user_email, payload.variant_ref_type, payload.variant_id, feature_name, idx),
+                    )
                 updated += 1
             conn.commit()
     return {"success": True, "updated": updated}
