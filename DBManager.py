@@ -2363,20 +2363,21 @@ class FeatureDbManager(DbManager):
 
     def get_variant_features(self, variant_id: str, version: int = 1, categories=None):
         query = """
-            SELECT vf.id, vf.variant_id, vf.feature_id, vf.value,
-                   vf.original_name, vf.version, fm.name AS feature_name, fm.category
+            SELECT vf.id, vf.variant_id, COALESCE(target.id, fm.id) AS feature_id, vf.value,
+                   vf.original_name, vf.version, COALESCE(target.name, fm.name) AS feature_name, COALESCE(target.category, fm.category) AS category
             FROM variant_features vf
             JOIN features_master fm ON vf.feature_id = fm.id
+            LEFT JOIN features_master target ON fm.mapped_to_id = target.id
             WHERE vf.variant_id = %s AND vf.version = %s AND fm.is_active = true
         """
         params = [variant_id, version]
 
         if categories:
             placeholders = ','.join(['%s'] * len(categories))
-            query += f" AND fm.category IN ({placeholders})"
+            query += f" AND COALESCE(target.category, fm.category) IN ({placeholders})"
             params.extend(categories)
 
-        query += " ORDER BY fm.category, fm.name"
+        query += " ORDER BY COALESCE(target.category, fm.category), COALESCE(target.name, fm.name)"
 
         with self.get_conn() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -3239,8 +3240,12 @@ class NewModelDbManager(DbManager):
                    nmf.id, nmf.nm_variant_id, nmf.feature_value, nmf.sub_variant_values, nmf.cost_delta,
                    nmf.copied_from_variant_class, nmf.original_copied_value
             FROM features_master fm
-            LEFT JOIN new_model_variant_features nmf 
-                   ON fm.id = nmf.feature_id AND nmf.nm_variant_id = %s
+            LEFT JOIN (
+                SELECT COALESCE(target.id, src.feature_id) AS mapped_feature_id, src.*
+                FROM new_model_variant_features src
+                LEFT JOIN features_master fm_src ON src.feature_id = fm_src.id
+                LEFT JOIN features_master target ON fm_src.mapped_to_id = target.id
+            ) nmf ON fm.id = nmf.mapped_feature_id AND nmf.nm_variant_id = %s
             WHERE fm.is_active = true
               AND fm.mapped_to_id IS NULL
               AND fm.name NOT IN (

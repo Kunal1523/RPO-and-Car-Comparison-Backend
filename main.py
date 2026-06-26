@@ -1780,7 +1780,16 @@ def get_variant_class_details(variant_class: str, version: int = 1):
             })
 
             features = feature_db.get_variant_features(variant_id=sv["id"], version=version)
-            features_per_sv[sv["name"]] = {f["feature_id"]: f for f in features}
+            sv_dict = {}
+            for f in features:
+                fid = f["feature_id"]
+                if fid in sv_dict:
+                    existing_val = sv_dict[fid].get("value", "")
+                    new_val = f.get("value", "")
+                    sv_dict[fid]["value"] = aggregate_values([existing_val, new_val])
+                else:
+                    sv_dict[fid] = f
+            features_per_sv[sv["name"]] = sv_dict
 
         all_feature_ids = {}
         for sv_features in features_per_sv.values():
@@ -1937,6 +1946,34 @@ def compare_variant_classes(payload: ClassCompareRequest):
         raise HTTPException(500, str(e))
 
 
+def combine_feature_values(val1: str, val2: str) -> str:
+    EMPTY = {"", "no", "no information available", "no information found", "n/a", "-"}
+    
+    v1 = val1.strip().lower()
+    v2 = val2.strip().lower()
+    
+    v1_empty = v1 in EMPTY
+    v2_empty = v2 in EMPTY
+    
+    if v1_empty and v2_empty: return val1  # Both empty, return original
+    if v1_empty: return val2
+    if v2_empty: return val1
+    if v1 == v2: return val1               # Same value
+    if v1 == "yes": return val2            # Descriptive > Yes
+    if v2 == "yes": return val1
+    
+    return f"{val1} / {val2}"             # Both descriptive and different
+
+def aggregate_values(values: list) -> str:
+    """Combine N features into a single value"""
+    if not values:
+        return ""
+    
+    result = str(values[0])
+    for v in values[1:]:
+        result = combine_feature_values(result, str(v))
+    return result
+
 class MixedCompareRequest(BaseModel):
     variant_classes: list[str] = []
     plan_ids: list[str] = []
@@ -2001,7 +2038,16 @@ def compare_mixed(payload: MixedCompareRequest):
                 })
 
                 features = feature_db.get_variant_features(variant_id=sv["id"], version=payload.version)
-                features_per_sv[sv["name"]] = {f["feature_id"]: f for f in features}
+                sv_dict = {}
+                for f in features:
+                    fid = f["feature_id"]
+                    if fid in sv_dict:
+                        existing_val = sv_dict[fid].get("value", "")
+                        new_val = f.get("value", "")
+                        sv_dict[fid]["value"] = aggregate_values([existing_val, new_val])
+                    else:
+                        sv_dict[fid] = f
+                features_per_sv[sv["name"]] = sv_dict
 
             all_feature_ids = {}
             for sv_features in features_per_sv.values():
@@ -2101,39 +2147,50 @@ def compare_mixed(payload: MixedCompareRequest):
                     nm_features_rows = new_model_db.get_nm_variant_features(str(plan_id))
                     nm_merged_features = []
 
-                    # ── Build feature_values map for nm_variant_ids ──────────────
-                    feature_values_map = {}
-
+                    nm_merged_dict = {}
                     for nf in nm_features_rows:
+                        fid = nf["feature_id"]
                         sub_variant_values = nf.get("sub_variant_values") or {}
                         if not sub_variant_values:
                             sub_variant_values = {variant_name: nf.get("feature_value", "")}
 
-                        nm_merged_features.append({
-                            "feature_id": nf["feature_id"],
-                            "feature_name": nf["feature_name"],
-                            "category": nf["category"],
-                            "sub_variant_values": sub_variant_values,
-                            "value": nf.get("feature_value", ""),
-                            "cost_delta": nf.get("cost_delta", 0),
-                            "is_edited": bool(
-                                nf.get("feature_value") and
-                                nf.get("original_copied_value") is not None and
-                                nf.get("feature_value") != nf.get("original_copied_value")
-                            ),
-                            "copied_from": nf.get("copied_from_variant_class")
-                        })
+                        val = nf.get("feature_value", "")
+                        
+                        is_edited = bool(
+                            val and
+                            nf.get("original_copied_value") is not None and
+                            val != nf.get("original_copied_value")
+                        )
 
-                        # Populate feature_values for this NM variant
-                        feature_values_map[nf["feature_id"]] = {
-                            "value": nf.get("feature_value", ""),
-                            "cost_delta": nf.get("cost_delta", 0),
-                            "is_edited": bool(
-                                nf.get("feature_value") and
-                                nf.get("original_copied_value") is not None and
-                                nf.get("feature_value") != nf.get("original_copied_value")
-                            ),
-                            "copied_from": nf.get("copied_from_variant_class")
+                        if fid in nm_merged_dict:
+                            existing = nm_merged_dict[fid]
+                            existing_val = existing["value"]
+                            aggregated_val = aggregate_values([existing_val, val])
+                            
+                            existing["value"] = aggregated_val
+                            existing["sub_variant_values"][variant_name] = aggregated_val
+                            existing["is_edited"] = existing["is_edited"] or is_edited
+                        else:
+                            nm_merged_dict[fid] = {
+                                "feature_id": fid,
+                                "feature_name": nf["feature_name"],
+                                "category": nf["category"],
+                                "sub_variant_values": sub_variant_values,
+                                "value": val,
+                                "cost_delta": nf.get("cost_delta", 0),
+                                "is_edited": is_edited,
+                                "copied_from": nf.get("copied_from_variant_class")
+                            }
+
+                    nm_merged_features = list(nm_merged_dict.values())
+
+                    feature_values_map = {}
+                    for fid, feat in nm_merged_dict.items():
+                        feature_values_map[fid] = {
+                            "value": feat["value"],
+                            "cost_delta": feat["cost_delta"],
+                            "is_edited": feat["is_edited"],
+                            "copied_from": feat["copied_from"]
                         }
 
                     # Column name used in data.columns for this NM variant
@@ -4475,7 +4532,30 @@ def clear_nm_variant_features(nm_variant_id: str):
 def get_nm_variant_features_endpoint(nm_variant_id: str):
     try:
         features = new_model_db.get_nm_variant_features(nm_variant_id)
-        return {"success": True, "data": features}
+        
+        aggregated_dict = {}
+        for f in features:
+            fid = f["feature_id"]
+            if fid in aggregated_dict:
+                existing = aggregated_dict[fid]
+                existing_val = existing.get("value", "")
+                new_val = f.get("value", "")
+                aggregated_val = aggregate_values([existing_val, new_val])
+                
+                existing["value"] = aggregated_val
+                
+                # Also aggregate sub_variant_values if present
+                for variant_name, old_sub_val in existing.get("sub_variant_values", {}).items():
+                    new_sub_val = f.get("sub_variant_values", {}).get(variant_name, "")
+                    existing["sub_variant_values"][variant_name] = aggregate_values([old_sub_val, new_sub_val])
+                
+                # if any is edited, mark as edited
+                existing["is_edited"] = existing.get("is_edited") or f.get("is_edited")
+            else:
+                aggregated_dict[fid] = f
+                
+        aggregated_features = list(aggregated_dict.values())
+        return {"success": True, "data": aggregated_features}
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -4621,6 +4701,233 @@ def get_audit_logs(limit: int = 100, offset: int = 0):
         return {"success": True, "data": audit_db.get_logs(limit=limit, offset=offset)}
     except Exception as e:
         return {"success": False, "detail": str(e)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Feature Wise Applicability APIs
+# ─────────────────────────────────────────────────────────────────────────────
+
+brand_db_inst = BrandDbManager()
+feature_db_inst = FeatureDbManager()
+
+@app.get("/api/brands-list")
+def get_brands_list():
+    """Returns all brands from the brands table + NM (used for Feature Applicability OEM filter)."""
+    try:
+        brands = brand_db_inst.get_all_brands()
+        # Add 'NM' (New Models) as a virtual brand
+        brands.append({"id": "virtual-nm-brand", "name": "NM"})
+        return {"success": True, "data": brands}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/features-list")
+def get_features_list():
+    """Returns all active features from features_master (used for Feature Applicability search dropdown).
+    Automatically reflects any newly added features by admin."""
+    try:
+        features = feature_db_inst.get_all_master_features_flat()
+        return {"success": True, "data": features}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/feature-applicability")
+def get_feature_applicability(feature_id: Optional[str] = None, brand_names: Optional[str] = None):
+    """
+    Pivot table data. Includes regular cars + new_models (NM).
+    """
+    try:
+        brand_filter = [b.strip() for b in brand_names.split(",") if b.strip()] if brand_names else []
+
+        with feature_db_inst.get_conn() as conn:
+            with conn.cursor() as cur:
+                brand_clause = ""
+                nm_brand_clause = ""
+                params: list = []
+                nm_params: list = []
+                
+                if brand_filter:
+                    placeholders = ",".join(["%s"] * len(brand_filter))
+                    brand_clause = f"AND b.name IN ({placeholders})"
+                    params.extend(brand_filter)
+                    
+                    if "NM" in brand_filter:
+                        nm_brand_clause = "AND 'NM' IN (" + placeholders + ")"
+                        nm_params.extend(brand_filter)
+                    else:
+                        nm_brand_clause = "AND 1=0" # Exclude NM if not in filter
+                
+                if feature_id:
+                    # Check if this is a core attribute stored directly on the new_model_variants table
+                    CORE_FEATURES = {
+                        "2f2c9a92-2933-4d3c-9497-05166c1e3bfd": "engine_type",
+                        "e03ef22e-9dd9-497f-a63e-a66498865dec": "powertrain_type",  # Usually 'Transmission Type'
+                        "9e7edfff-c83f-4fec-96e9-8dc3a430caa9": "fuel_type",
+                        "769ad0f5-a7fb-4965-8260-fa1408e11fd7": "drive_type",
+                    }
+                    
+                    if feature_id in CORE_FEATURES:
+                        col_name = CORE_FEATURES[feature_id]
+                        params_full = [feature_id] + params + nm_params
+                        query = f"""
+                            SELECT
+                                c.body_type,
+                                c.sub_body_type,
+                                b.name          AS brand,
+                                c.name          AS model,
+                                v.variant_class,
+                                v.name          AS variant_name,
+                                vf.value
+                            FROM variants v
+                            JOIN cars             c  ON c.id = v.car_id
+                            JOIN brands           b  ON b.id = c.brand_id
+                            LEFT JOIN variant_features vf 
+                                   ON v.id = vf.variant_id 
+                                  AND vf.feature_id = %s 
+                                  AND vf.is_latest  = true
+                            WHERE v.is_latest = true
+                              {brand_clause}
+
+                            UNION ALL
+
+                            SELECT
+                                nm.body_type,
+                                nm.sub_body_type,
+                                'NM'            AS brand,
+                                nm.name         AS model,
+                                nmv.variant_name AS variant_class,
+                                nmv.variant_name AS variant_name,
+                                nmv.{col_name}  AS value
+                            FROM new_model_variants nmv
+                            JOIN new_models nm ON nm.id = nmv.new_model_id
+                            WHERE 1=1
+                              {nm_brand_clause}
+
+                            ORDER BY 1 NULLS LAST, 3, 4, 5 NULLS LAST, 6;
+                        """
+                    else:
+                        # ── Regular query for non-core features (uses LEFT JOIN) ────
+                        params_full = [feature_id] + params + [feature_id] + nm_params
+                        query = f"""
+                            SELECT
+                                c.body_type,
+                                c.sub_body_type,
+                                b.name          AS brand,
+                                c.name          AS model,
+                                v.variant_class,
+                                v.name          AS variant_name,
+                                vf.value
+                            FROM variants v
+                            JOIN cars             c  ON c.id = v.car_id
+                            JOIN brands           b  ON b.id = c.brand_id
+                            LEFT JOIN variant_features vf 
+                                   ON v.id = vf.variant_id 
+                                  AND vf.feature_id = %s 
+                                  AND vf.is_latest  = true
+                            WHERE v.is_latest = true
+                              {brand_clause}
+
+                            UNION ALL
+
+                            SELECT
+                                nm.body_type,
+                                nm.sub_body_type,
+                                'NM'            AS brand,
+                                nm.name         AS model,
+                                nmv.variant_name AS variant_class,
+                                nmv.variant_name AS variant_name,
+                                nmvf.feature_value AS value
+                            FROM new_model_variants nmv
+                            JOIN new_models nm ON nm.id = nmv.new_model_id
+                            LEFT JOIN new_model_variant_features nmvf
+                                   ON nmv.id = nmvf.nm_variant_id
+                                  AND nmvf.feature_id = %s
+                            WHERE 1=1
+                              {nm_brand_clause}
+
+                            ORDER BY 1 NULLS LAST, 3, 4, 5 NULLS LAST, 6;
+                        """
+                        
+                    cur.execute(query, params_full)
+                    rows = cur.fetchall()
+
+                    EMPTY_VALUES = {"no", "no information available", "no information found", "n/a", "-", ""}
+                    grouped: dict = {}
+                    for body_type, sub_body_type, brand, model, variant_class, variant_name, value in rows:
+                        key = (body_type or "", sub_body_type or "", brand, model, variant_class or "")
+                        if key not in grouped:
+                            grouped[key] = {"sub_variants": []}
+                        grouped[key]["sub_variants"].append({"name": variant_name, "value": value or ""})
+
+                    result = []
+                    for (body_type, sub_body_type, brand, model, variant_class), data in grouped.items():
+                        has_feature = any(
+                            sv["value"].strip().lower() not in EMPTY_VALUES
+                            for sv in data["sub_variants"]
+                        )
+                        result.append({
+                            "body_type": body_type,
+                            "sub_body_type": sub_body_type,
+                            "brand": brand,
+                            "model": model,
+                            "variant_class": variant_class,
+                            "has_feature": has_feature,
+                            "sub_variants": data["sub_variants"],
+                        })
+
+                else:
+                    # ── Structure-only query (no feature filter) ────────────
+                    params_full = params + nm_params
+                    query = f"""
+                        SELECT DISTINCT
+                            c.body_type,
+                            c.sub_body_type,
+                            b.name          AS brand,
+                            c.name          AS model,
+                            v.variant_class
+                        FROM variants v
+                        JOIN cars     c ON c.id = v.car_id
+                        JOIN brands   b ON b.id = c.brand_id
+                        WHERE v.is_latest = true
+                          {brand_clause}
+
+                        UNION ALL
+
+                        SELECT DISTINCT
+                            nm.body_type,
+                            nm.sub_body_type,
+                            'NM'            AS brand,
+                            nm.name         AS model,
+                            nmv.variant_name AS variant_class
+                        FROM new_model_variants nmv
+                        JOIN new_models nm ON nm.id = nmv.new_model_id
+                        WHERE 1=1
+                          {nm_brand_clause}
+
+                        ORDER BY 1 NULLS LAST, 3, 4, 5 NULLS LAST;
+                    """
+                    cur.execute(query, params_full)
+                    rows = cur.fetchall()
+
+                    result = [
+                        {
+                            "body_type": r[0] or "",
+                            "sub_body_type": r[1] or "",
+                            "brand": r[2],
+                            "model": r[3],
+                            "variant_class": r[4] or "",
+                            "has_feature": None,   # no feature searched yet
+                            "sub_variants": [],
+                        }
+                        for r in rows
+                    ]
+
+        return {"success": True, "data": result}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
