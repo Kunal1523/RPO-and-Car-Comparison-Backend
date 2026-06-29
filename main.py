@@ -2151,12 +2151,18 @@ def compare_mixed(payload: MixedCompareRequest):
                             sub_variant_values = {variant_name: nf.get("feature_value", "")}
 
                         val = nf.get("feature_value", "")
-                        
-                        is_edited = bool(
-                            val and
-                            nf.get("original_copied_value") is not None and
-                            val != nf.get("original_copied_value")
-                        )
+                        orig_val = nf.get("original_copied_value")
+                        copied_from = nf.get("copied_from_variant_class")
+                        cost_delta = nf.get("cost_delta")
+                        if cost_delta is None:
+                            cost_delta = 0.0
+                        else:
+                            cost_delta = float(cost_delta)
+
+                        if copied_from:
+                            is_edited = (val != (orig_val or "")) or (cost_delta != 0.0)
+                        else:
+                            is_edited = bool(val.strip()) or (cost_delta != 0.0)
 
                         if fid in nm_merged_dict:
                             existing = nm_merged_dict[fid]
@@ -4556,13 +4562,33 @@ def get_nm_variant_features_endpoint(nm_variant_id: str):
         aggregated_dict = {}
         for f in features:
             fid = f["feature_id"]
+            
+            # Calculate is_edited for this feature
+            val = f.get("feature_value", "")
+            orig_val = f.get("original_copied_value")
+            copied_from = f.get("copied_from_variant_class")
+            cost_delta = f.get("cost_delta")
+            if cost_delta is None:
+                cost_delta = 0.0
+            else:
+                cost_delta = float(cost_delta)
+
+            if copied_from:
+                is_edited = (val != (orig_val or "")) or (cost_delta != 0.0)
+            else:
+                is_edited = bool(val.strip()) or (cost_delta != 0.0)
+            
+            f["is_edited"] = is_edited
+            
             if fid in aggregated_dict:
                 existing = aggregated_dict[fid]
-                existing_val = existing.get("value", "")
-                new_val = f.get("value", "")
+                existing_val = existing.get("feature_value") or existing.get("value") or ""
+                new_val = f.get("feature_value") or f.get("value") or ""
                 aggregated_val = aggregate_values([existing_val, new_val])
                 
-                existing["value"] = aggregated_val
+                existing["feature_value"] = aggregated_val
+                if "value" in existing:
+                    existing["value"] = aggregated_val
                 
                 # Also aggregate sub_variant_values if present
                 for variant_name, old_sub_val in existing.get("sub_variant_values", {}).items():
@@ -4570,7 +4596,7 @@ def get_nm_variant_features_endpoint(nm_variant_id: str):
                     existing["sub_variant_values"][variant_name] = aggregate_values([old_sub_val, new_sub_val])
                 
                 # if any is edited, mark as edited
-                existing["is_edited"] = existing.get("is_edited") or f.get("is_edited")
+                existing["is_edited"] = existing.get("is_edited") or is_edited
             else:
                 aggregated_dict[fid] = f
                 
