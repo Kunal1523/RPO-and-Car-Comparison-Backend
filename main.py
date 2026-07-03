@@ -4703,7 +4703,11 @@ async def audit_middleware(request: Request, call_next):
             "/features/master",
             "/api/feature-master"
         ]
-        if any(path.startswith(p) for p in protected_prefixes):
+        is_protected = any(path.startswith(p) for p in protected_prefixes)
+        if is_protected and "/variants/" in path and ("features" in path or "copy-features" in path):
+            is_protected = False
+            
+        if is_protected:
             user_email = request.headers.get("X-User-Email") or request.headers.get("x-user-email")
             if user_email != "msiluser3@gmail.com":
                 return JSONResponse(status_code=403, content={"success": False, "detail": "Only msiluser3@gmail.com can perform this action"})
