@@ -11,6 +11,8 @@ class Settings:
     def __init__(self):
         self.DATABASE_URL = os.getenv("DATABASE_URL")
         self.ALLOWED_USERS = os.getenv("ALLOWED_USERS")
+        self.GUEST_EMAIL_1 = os.getenv("GUEST_EMAIL_1")
+        self.GUEST_EMAIL_2 = os.getenv("GUEST_EMAIL_2")
 
         if not self.DATABASE_URL:
             print("[config] WARNING: DATABASE_URL is not set — database features will be unavailable.")

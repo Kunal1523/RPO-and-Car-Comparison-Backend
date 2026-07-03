@@ -12,52 +12,63 @@ load_dotenv()
 
 # Shared pool for UserDBHandler
 _pool1 = None
-_local1 = threading.local()
+_pool_lock1 = threading.Lock()
 
 def get_db_pool1():
     global _pool1
     if _pool1 is None:
-        db_url = os.getenv("DATABASE_URL")
-        if not db_url:
-            print("[DBmanager1] WARNING: DATABASE_URL is not set — database pool skipped.")
-            return None
-        try:
-            _pool1 = pool.ThreadedConnectionPool(1, 5, db_url)
-        except Exception as e:
-            print(f"[DBmanager1] WARNING: Could not connect to database — {e}")
-            return None
+        with _pool_lock1:
+            if _pool1 is None:
+                db_url = os.getenv("DATABASE_URL")
+                if not db_url:
+                    print("[DBmanager1] WARNING: DATABASE_URL is not set — database pool skipped.")
+                    return None
+                try:
+                    _pool1 = pool.ThreadedConnectionPool(1, 2, db_url)
+                except Exception as e:
+                    print(f"[DBmanager1] WARNING: Could not connect to database — {e}")
+                    return None
     return _pool1
 
 class DbManager:
     def __init__(self):
         pass
 
-    def get_conn_internal(self):
+    def get_conn(self):
+        """
+        Returns a context manager that checks out ONE connection from the pool
+        and returns it when the `with` block exits.
+        """
+        class _ManagedConn:
+            def __init__(self, db_pool):
+                self._pool = db_pool
+                self._conn = None
+
+            def __enter__(self):
+                self._conn = self._pool.getconn()
+                self._conn.autocommit = True
+                return self._conn
+
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                if self._conn:
+                    try:
+                        if not self._conn.autocommit and self._conn.status != 0:
+                            self._conn.rollback()
+                    except Exception:
+                        pass
+                    self._pool.putconn(self._conn)
+                    self._conn = None
+                return False  # do not suppress exceptions
+
         db_pool = get_db_pool1()
         if db_pool is None:
             raise RuntimeError("Database is unavailable (DATABASE_URL not set or DB unreachable).")
-        if not hasattr(_local1, "conn") or _local1.conn is None:
-            _local1.conn = db_pool.getconn()
-            _local1.conn.autocommit = True
-        return _local1.conn
+        return _ManagedConn(db_pool)
 
     @staticmethod
     def release_conn():
-        if hasattr(_local1, "conn") and _local1.conn is not None:
-            try:
-                db_pool = get_db_pool1()
-                if db_pool is not None:
-                    db_pool.putconn(_local1.conn)
-            except Exception:
-                pass
-            _local1.conn = None
-
-    @contextlib.contextmanager
-    def get_conn(self):
-        try:
-            yield self.get_conn_internal()
-        finally:
-            self.release_conn()
+        """Kept as a no-op static method for backwards compatibility."""
+        pass
 
 class UserDBHandler(DbManager):
 

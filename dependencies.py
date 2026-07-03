@@ -23,6 +23,11 @@ def get_current_user(x_user_email: Optional[str] = Header(None)):
             detail="Missing authentication header (X-User-Email)"
         )
 
+    # Bypass database check for guest users
+    guest_emails = [getattr(settings, "GUEST_EMAIL_1", None), getattr(settings, "GUEST_EMAIL_2", None)]
+    guest_emails = [email for email in guest_emails if email]
+    if x_user_email and x_user_email in guest_emails:
+        return x_user_email
    
         
     owner_email = userdbhandler.get_owner_email(x_user_email)

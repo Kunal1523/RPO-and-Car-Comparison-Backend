@@ -1571,7 +1571,7 @@ def get_db_pool():
             # Double-checked locking
             if _pool is None:
                 _pool = pool.ThreadedConnectionPool(
-                    1, 10,  # min 1, max 10 connections
+                    1, 6,  # min 1, max 6 connections
                     user=os.getenv("user"),
                     password=os.getenv("password"),
                     host=os.getenv("host"),

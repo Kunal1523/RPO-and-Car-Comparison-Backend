@@ -826,103 +826,107 @@ def reorder_features(updates: List[FeatureReorderItem]):
 @app.post("/admin/normalize-variants-and-pricing")
 def normalize_variants_and_pricing(brand_name: str, car_name: str):
     try:
-        conn = variant_db.get_conn()
-
-        with conn.cursor() as cursor:
-
-            # 1️⃣ Get car_id
-            cursor.execute("""
-                SELECT c.id
-                FROM cars c
-                JOIN brands b ON b.id = c.brand_id
-                WHERE b.name = %s AND c.name = %s
-            """, (brand_name, car_name))
-            row = cursor.fetchone()
-            if not row:
-                raise HTTPException(404, "Car not found")
-            car_id = row[0]
-
-            # 2️⃣ Get all variants of this car
-            cursor.execute("""
-                SELECT id, name
-                FROM variants
-                WHERE car_id = %s
-            """, (car_id,))
-            variants = cursor.fetchall()
-
-            master_map = {}  # clean_name -> master_variant_id
-            fixed_variants = 0
-            moved_prices = 0
-
-            for variant_id, name in variants:
-                lower = name.lower()
-
-                # Detect paint type
-                if "dual" in lower:
-                    paint_type = "dual_tone"
-                elif "metallic" in lower:
-                    paint_type = "metallic"
-                else:
-                    paint_type = "standard"
-
-                # Normalize variant name
-                clean_name = (
-                    name.replace("(Dual Tone)", "")
-                        .replace("(Metallic)", "")
-                        .strip()
-                )
-
-                # 3️⃣ Get / create master variant
-                if clean_name not in master_map:
+        with variant_db.get_conn() as conn:
+            conn.autocommit = False
+            try:
+                with conn.cursor() as cursor:
+                    # 1️⃣ Get car_id
                     cursor.execute("""
-                        SELECT id FROM variants
-                        WHERE car_id = %s AND name = %s
-                    """, (car_id, clean_name))
-                    existing = cursor.fetchone()
+                        SELECT c.id
+                        FROM cars c
+                        JOIN brands b ON b.id = c.brand_id
+                        WHERE b.name = %s AND c.name = %s
+                    """, (brand_name, car_name))
+                    row = cursor.fetchone()
+                    if not row:
+                        raise HTTPException(404, "Car not found")
+                    car_id = row[0]
 
-                    if existing:
-                        master_id = existing[0]
-                    else:
+                    # 2️⃣ Get all variants of this car
+                    cursor.execute("""
+                        SELECT id, name
+                        FROM variants
+                        WHERE car_id = %s
+                    """, (car_id,))
+                    variants = cursor.fetchall()
+
+                    master_map = {}  # clean_name -> master_variant_id
+                    fixed_variants = 0
+                    moved_prices = 0
+
+                    for variant_id, name in variants:
+                        lower = name.lower()
+
+                        # Detect paint type
+                        if "dual" in lower:
+                            paint_type = "dual_tone"
+                        elif "metallic" in lower:
+                            paint_type = "metallic"
+                        else:
+                            paint_type = "standard"
+
+                        # Normalize variant name
+                        clean_name = (
+                            name.replace("(Dual Tone)", "")
+                                .replace("(Metallic)", "")
+                                .strip()
+                        )
+
+                        # 3️⃣ Get / create master variant
+                        if clean_name not in master_map:
+                            cursor.execute("""
+                                SELECT id FROM variants
+                                WHERE car_id = %s AND name = %s
+                            """, (car_id, clean_name))
+                            existing = cursor.fetchone()
+
+                            if existing:
+                                master_id = existing[0]
+                            else:
+                                cursor.execute("""
+                                    INSERT INTO variants (car_id, name)
+                                    VALUES (%s, %s)
+                                    RETURNING id
+                                """, (car_id, clean_name))
+                                master_id = cursor.fetchone()[0]
+
+                            master_map[clean_name] = master_id
+                        else:
+                            master_id = master_map[clean_name]
+
+                        # 4️⃣ Move pricing
                         cursor.execute("""
-                            INSERT INTO variants (car_id, name)
-                            VALUES (%s, %s)
-                            RETURNING id
-                        """, (car_id, clean_name))
-                        master_id = cursor.fetchone()[0]
+                            UPDATE pricing
+                            SET variant_id = %s,
+                                paint_type = %s
+                            WHERE variant_id = %s
+                        """, (master_id, paint_type, variant_id))
 
-                    master_map[clean_name] = master_id
-                else:
-                    master_id = master_map[clean_name]
+                        if variant_id != master_id:
+                            # 5️⃣ Delete duplicate variant
+                            cursor.execute("""
+                                DELETE FROM variants WHERE id = %s
+                            """, (variant_id,))
+                            fixed_variants += 1
 
-                # 4️⃣ Move pricing
-                cursor.execute("""
-                    UPDATE pricing
-                    SET variant_id = %s,
-                        paint_type = %s
-                    WHERE variant_id = %s
-                """, (master_id, paint_type, variant_id))
+                        moved_prices += cursor.rowcount
 
-                if variant_id != master_id:
-                    # 5️⃣ Delete duplicate variant
-                    cursor.execute("""
-                        DELETE FROM variants WHERE id = %s
-                    """, (variant_id,))
-                    fixed_variants += 1
+                conn.commit()
 
-                moved_prices += cursor.rowcount
+                return {
+                    "success": True,
+                    "variants_removed": fixed_variants,
+                    "pricing_rows_updated": moved_prices,
+                    "final_variants_expected": "≈20",
+                    "message": "Variants normalized & pricing separated by paint type"
+                }
+            except Exception as e:
+                conn.rollback()
+                raise e
 
-        conn.commit()
-
-        return {
-            "success": True,
-            "variants_removed": fixed_variants,
-            "pricing_rows_updated": moved_prices,
-            "final_variants_expected": "≈20",
-            "message": "Variants normalized & pricing separated by paint type"
-        }
-
+    except HTTPException:
+        raise
     except Exception as e:
-        conn.rollback()
         raise HTTPException(500, str(e))
 
 # import re
@@ -1118,127 +1122,132 @@ def upload_variant_features_excel_fast(
 ):
     valid_logger, duplicate_logger, skipped_logger = get_loggers()
     valid_logger.info("=== API CALLED ===")
-    conn = feature_db.get_conn()
     skipped_rows = []
 
     try:
-        wb = openpyxl.load_workbook(file.file, read_only=True)
-        sheet = wb.active
+        with feature_db.get_conn() as conn:
+            conn.autocommit = False
+            try:
+                wb = openpyxl.load_workbook(file.file, read_only=True)
+                sheet = wb.active
 
-        # -------------------------------
-        # 1️⃣ LOAD MASTER DATA
-        # -------------------------------
-        with conn.cursor() as cursor:
+                # -------------------------------
+                # 1️⃣ LOAD MASTER DATA
+                # -------------------------------
+                with conn.cursor() as cursor:
 
-            cursor.execute("""
-                SELECT c.id
-                FROM cars c
-                JOIN brands b ON b.id = c.brand_id
-                WHERE b.name = %s AND c.name = %s
-            """, (brand_name, car_name))
-            car = cursor.fetchone()
-            if not car:
-                raise HTTPException(404, "Car not found")
-            car_id = car[0]
+                    cursor.execute("""
+                        SELECT c.id
+                        FROM cars c
+                        JOIN brands b ON b.id = c.brand_id
+                        WHERE b.name = %s AND c.name = %s
+                    """, (brand_name, car_name))
+                    car = cursor.fetchone()
+                    if not car:
+                        raise HTTPException(404, "Car not found")
+                    car_id = car[0]
 
-            cursor.execute("""
-                SELECT id, name
-                FROM variants
-                WHERE car_id = %s
-            """, (car_id,))
-            variant_map = {name.strip().lower(): vid for vid, name in cursor.fetchall()}
+                    cursor.execute("""
+                        SELECT id, name
+                        FROM variants
+                        WHERE car_id = %s
+                    """, (car_id,))
+                    variant_map = {name.strip().lower(): vid for vid, name in cursor.fetchall()}
 
-            cursor.execute("""
-                SELECT id, name, category
-                FROM features_master
-            """)
-            feature_map = {
-                (normalize_feature(name), category.strip().lower()): fid
-                for fid, name, category in cursor.fetchall()
-            }
+                    cursor.execute("""
+                        SELECT id, name, category
+                        FROM features_master
+                    """)
+                    feature_map = {
+                        (normalize_feature(name), category.strip().lower()): fid
+                        for fid, name, category in cursor.fetchall()
+                    }
 
-        # -------------------------------
-        # 2️⃣ PROCESS EXCEL ROWS
-        # -------------------------------
-        bulk_rows = []
-        seen_keys = set()
+                # -------------------------------
+                # 2️⃣ PROCESS EXCEL ROWS
+                # -------------------------------
+                bulk_rows = []
+                seen_keys = set()
 
-        for idx, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
-            category, feature_name, variant_name, value = row
-            reason = None
+                for idx, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
+                    category, feature_name, variant_name, value = row
+                    reason = None
 
-            if not category or not feature_name or not variant_name or value is None:
-                reason = "Missing mandatory field"
-            else:
-                v_key = variant_name.strip().lower()
-                if v_key not in variant_map:
-                    reason = f"Variant not found: {variant_name}"
+                    if not category or not feature_name or not variant_name or value is None:
+                        reason = "Missing mandatory field"
+                    else:
+                        v_key = variant_name.strip().lower()
+                        if v_key not in variant_map:
+                            reason = f"Variant not found: {variant_name}"
 
-                f_key = (normalize_feature(feature_name), normalize_category(category))
-                if not reason and f_key not in feature_map:
-                    reason = f"Feature not found: {feature_name} ({category})"
+                        f_key = (normalize_feature(feature_name), normalize_category(category))
+                        if not reason and f_key not in feature_map:
+                            reason = f"Feature not found: {feature_name} ({category})"
 
-            if reason:
-                skipped_logger.info(
-                    f"Row {idx} | Category={category} | Feature={feature_name} | "
-                    f"Variant={variant_name} | Value={value} | Reason={reason}"
-                )
-                skipped_rows.append({
-                    "row_number": idx,
-                    "reason": reason
-                })
-                continue
+                    if reason:
+                        skipped_logger.info(
+                            f"Row {idx} | Category={category} | Feature={feature_name} | "
+                            f"Variant={variant_name} | Value={value} | Reason={reason}"
+                        )
+                        skipped_rows.append({
+                            "row_number": idx,
+                            "reason": reason
+                        })
+                        continue
 
-            variant_id = variant_map[v_key]
-            feature_id = feature_map[f_key]
-            key = (variant_id, feature_id)
+                    variant_id = variant_map[v_key]
+                    feature_id = feature_map[f_key]
+                    key = (variant_id, feature_id)
 
-            if key in seen_keys:
-                duplicate_logger.info(
-                    f"Row {idx} | DUPLICATE | variant_id={variant_id} | "
-                    f"feature_id={feature_id} | Feature={feature_name}"
-                )
-                continue
+                    if key in seen_keys:
+                        duplicate_logger.info(
+                            f"Row {idx} | DUPLICATE | variant_id={variant_id} | "
+                            f"feature_id={feature_id} | Feature={feature_name}"
+                        )
+                        continue
 
-            seen_keys.add(key)
+                    seen_keys.add(key)
 
-            valid_logger.info(
-                f"Row {idx} | variant_id={variant_id} | feature_id={feature_id} | "
-                f"Value={value} | Feature={feature_name}"
-            )
+                    valid_logger.info(
+                        f"Row {idx} | variant_id={variant_id} | feature_id={feature_id} | "
+                        f"Value={value} | Feature={feature_name}"
+                    )
 
-            bulk_rows.append((
-                variant_id,
-                feature_id,
-                str(value).strip(),
-                feature_name.strip()
-            ))
+                    bulk_rows.append((
+                        variant_id,
+                        feature_id,
+                        str(value).strip(),
+                        feature_name.strip()
+                    ))
 
-        # -------------------------------
-        # 3️⃣ INSERT
-        # -------------------------------
-        if not bulk_rows:
-            return {"success": False, "message": "No valid rows to insert"}
+                # -------------------------------
+                # 3️⃣ INSERT
+                # -------------------------------
+                if not bulk_rows:
+                    return {"success": False, "message": "No valid rows to insert"}
 
-        with conn.cursor() as cursor:
-            execute_values(
-                cursor,
-                """
-                INSERT INTO variant_features
-                    (variant_id, feature_id, value, original_name)
-                VALUES %s
-                ON CONFLICT (variant_id, feature_id, version)
-                DO UPDATE SET
-                    value = EXCLUDED.value,
-                    original_name = EXCLUDED.original_name,
-                    is_latest = true
-                """,
-                bulk_rows,
-                page_size=1000
-            )
+                with conn.cursor() as cursor:
+                    execute_values(
+                        cursor,
+                        """
+                        INSERT INTO variant_features
+                            (variant_id, feature_id, value, original_name)
+                        VALUES %s
+                        ON CONFLICT (variant_id, feature_id, version)
+                        DO UPDATE SET
+                            value = EXCLUDED.value,
+                            original_name = EXCLUDED.original_name,
+                            is_latest = true
+                        """,
+                        bulk_rows,
+                        page_size=1000
+                    )
 
-        conn.commit()
-        
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                raise e
+
         for logger in (valid_logger, duplicate_logger, skipped_logger):
             for h in logger.handlers:
                 h.flush()
@@ -1254,8 +1263,9 @@ def upload_variant_features_excel_fast(
             }
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        conn.rollback()
         raise HTTPException(500, str(e))
 
 

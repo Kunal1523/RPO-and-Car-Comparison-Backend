@@ -67,8 +67,8 @@ try:
         connect_args=connect_args,
         pool_pre_ping=True,
         pool_recycle=1800,
-        pool_size=5,
-        max_overflow=2,
+        pool_size=2,
+        max_overflow=0,
         pool_timeout=30,
         echo=False
     )
